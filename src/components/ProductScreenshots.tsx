@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect } from "react";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
@@ -42,12 +43,9 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeIndex]);
 
-  // Clean up overflow style on unmount
   useEffect(() => {
     return () => {
       document.body.style.overflow = "";
@@ -58,32 +56,31 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
 
   return (
     <div className="space-y-4">
-      {/* Grid view of screenshots */}
       <div className="grid grid-cols-3 gap-4">
         {screenshots.map((src, i) => (
           <AspectRatio
-            key={i}
+            key={src + i}
             ratio={16 / 9}
             className="rounded-xl border border-border/40 bg-muted overflow-hidden group cursor-zoom-in shadow-sm"
             onClick={() => openModal(i)}
           >
-            <img
+            <Image
               src={src}
-              alt={`${productTitle} screenshot ${i + 1}`}
+              alt={productTitle + " screenshot " + (i + 1)}
+              fill
+              sizes="(max-width: 768px) 33vw, 220px"
               loading="lazy"
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+              className="object-cover transition-transform duration-500 group-hover:scale-110"
             />
           </AspectRatio>
         ))}
       </div>
 
-      {/* Fullscreen Lightbox Overlay */}
       {activeIndex !== null && (
         <div
           className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-center items-center select-none animate-in fade-in duration-200"
           onClick={closeModal}
         >
-          {/* Close button */}
           <button
             className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors cursor-pointer p-3 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
             onClick={(e) => {
@@ -95,7 +92,6 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
             <X className="w-6 h-6" />
           </button>
 
-          {/* Left Arrow Navigation */}
           {screenshots.length > 1 && (
             <button
               className="absolute left-6 top-1/2 -translate-y-1/2 text-white/70 hover:text-white transition-colors cursor-pointer p-4 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
@@ -109,19 +105,18 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
             </button>
           )}
 
-          {/* Screenshot container */}
           <div
             className="relative max-w-[85vw] max-h-[80vh] flex items-center justify-center"
             onClick={(e) => e.stopPropagation()}
           >
             <img
               src={screenshots[activeIndex]}
-              alt={`${productTitle} screenshot ${activeIndex + 1}`}
+              alt={productTitle + " screenshot " + (activeIndex + 1)}
               className="max-w-full max-h-[80vh] object-contain rounded-2xl border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200"
+              decoding="async"
             />
           </div>
 
-          {/* Right Arrow Navigation */}
           {screenshots.length > 1 && (
             <button
               className="absolute right-6 top-1/2 -translate-y-1/2 text-white/70 hover:text-white transition-colors cursor-pointer p-4 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
@@ -135,7 +130,6 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
             </button>
           )}
 
-          {/* Bottom indicator */}
           <div className="absolute bottom-6 text-white/50 text-xs font-semibold tracking-widest uppercase">
             {activeIndex + 1} / {screenshots.length}
           </div>
