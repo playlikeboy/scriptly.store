@@ -34,25 +34,35 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   // Dynamic products
-  const allProducts = await db.query.products.findMany({
-    where: (products, { eq }) => eq(products.published, true),
-  });
+  let productRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const allProducts = await db.query.products.findMany({
+      where: (products, { eq }) => eq(products.published, true),
+    });
 
-  const productRoutes = allProducts.map((product) => ({
-    url: `${baseUrl}/products/${product.slug}`,
-    lastModified: product.updatedAt,
-    changeFrequency: "weekly" as const,
-    priority: 0.8,
-  }));
+    productRoutes = allProducts.map((product) => ({
+      url: `${baseUrl}/products/${product.slug}`,
+      lastModified: product.updatedAt,
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
+    }));
+  } catch (err) {
+    console.error("sitemap: failed to load products", err);
+  }
 
   // Dynamic categories
-  const allCategories = await db.query.categories.findMany();
-  const categoryRoutes = allCategories.map((category) => ({
-    url: `${baseUrl}/explore/${category.slug}`,
-    lastModified: new Date(),
-    changeFrequency: "weekly" as const,
-    priority: 0.8,
-  }));
+  let categoryRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const allCategories = await db.query.categories.findMany();
+    categoryRoutes = allCategories.map((category) => ({
+      url: `${baseUrl}/explore/${category.slug}`,
+      lastModified: new Date(),
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
+    }));
+  } catch (err) {
+    console.error("sitemap: failed to load categories", err);
+  }
 
   // Blog dynamic pages
   const blogIndexRoute = {

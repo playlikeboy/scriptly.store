@@ -3,7 +3,10 @@ import { neon } from "@neondatabase/serverless";
 import * as schema from "@/db/schema";
 
 const getDbInstance = () => {
-  const connectionString = process.env.DATABASE_URL || "postgres://localhost:5432/scriptlystore";
+  const connectionString =
+    (process.env.DATABASE_URL && process.env.DATABASE_URL.includes("."))
+      ? process.env.DATABASE_URL
+      : "postgresql://neondb_owner:npg_Jm8eVuf9QLZq@ep-snowy-waterfall-aolziam1-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
   const client = neon(connectionString);
   return drizzle(client, { schema });
 };
