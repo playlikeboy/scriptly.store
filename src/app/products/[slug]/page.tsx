@@ -193,7 +193,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
   }
 
   const tagsList = product.tags ? product.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
-  const screenshotsList = product.screenshots ? product.screenshots.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const screenshotsList = Array.from(new Set(product.screenshots ? product.screenshots.split(",").map((s) => s.trim()).filter(Boolean) : [])).filter((src) => src !== product.thumbnail);
 
   const customRenderer = new marked.Renderer();
   customRenderer.link = function(token) {
