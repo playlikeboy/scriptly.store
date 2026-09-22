@@ -7,9 +7,7 @@ import { notFound } from "next/navigation";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import ProductCheckout from "@/components/ProductCheckout";
 import Link from "next/link";
-const ProductAffiliateShare = dynamic(() => import("@/components/ProductAffiliateShare"), {
-  ssr: false,
-});
+import ProductAffiliateShare from "@/components/ProductAffiliateShare";
 import { getProductEffectivePrice } from "@/lib/price-utils";
 import {
   ArrowLeft,
@@ -31,25 +29,15 @@ import {
   Home,
 } from "lucide-react";
 import { Metadata } from "next";
-import dynamic from "next/dynamic";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { marked } from "marked";
 import ShareButton from "@/components/ShareButton";
 import AdminToolbar from "@/app/products/[slug]/AdminToolbar";
-const ProductScreenshots = dynamic(() => import("@/components/ProductScreenshots"), {
-  ssr: false,
-  loading: () => <div className="min-h-24 rounded-2xl bg-muted/20 animate-pulse" aria-hidden="true" />,
-});
+import ProductScreenshots from "@/components/ProductScreenshots";
 import ProductMediaSwitcher from "@/components/ProductMediaSwitcher";
 import ProductRating from "@/components/ProductRating";
-const ProductInteractionAndReviews = dynamic(
-  () => import("@/components/ProductInteractionAndReviews"),
-  {
-    ssr: false,
-    loading: () => <div className="min-h-40 rounded-2xl bg-muted/20 animate-pulse" aria-hidden="true" />,
-  }
-);
+import ProductInteractionAndReviews from "@/components/ProductInteractionAndReviews";
 import { getProductSeo } from "@/lib/seo-data";
 import { siteConfig } from "@/config/site";
 import { CyberBackground } from "@/components/ui/CyberBackground";
