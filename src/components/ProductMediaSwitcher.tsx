@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { Play, Image as ImageIcon, Film, Eye } from "lucide-react";
 import TweetEmbed from "@/components/TweetEmbed";
@@ -13,8 +14,12 @@ interface ProductMediaSwitcherProps {
   title: string;
 }
 
-export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, title }: ProductMediaSwitcherProps) {
-  // Determine default tab based on priority: Video -> GIF -> Poster
+export default function ProductMediaSwitcher({
+  videoUrl,
+  previewGif,
+  thumbnail,
+  title,
+}: ProductMediaSwitcherProps) {
   const hasVideo = !!videoUrl;
   const hasGif = !!previewGif;
   const hasPoster = !!thumbnail;
@@ -22,7 +27,7 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
   const defaultTab = hasVideo ? "video" : hasGif ? "gif" : "poster";
   const [activeTab, setActiveTab] = useState<"video" | "gif" | "poster">(defaultTab);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<number>(16 / 9);
+  const [aspectRatio, setAspectRatio] = useState<number>(3 / 2);
 
   const isTweet = videoUrl?.includes("twitter.com") || videoUrl?.includes("x.com");
   const tweetId = isTweet ? videoUrl?.match(/status\/(\d+)/)?.[1] : null;
@@ -32,25 +37,36 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
       setAspectRatio(16 / 9);
       return;
     }
-    const img = e.currentTarget;
-    const ratio = img.naturalWidth / img.naturalHeight;
-    if (ratio && !isNaN(ratio)) {
-      const boundedRatio = Math.max(0.65, Math.min(ratio, 2.0));
-      setAspectRatio(boundedRatio);
+
+    const { naturalWidth, naturalHeight } = e.currentTarget;
+    const ratio = naturalWidth / naturalHeight;
+
+    if (ratio && Number.isFinite(ratio)) {
+      setAspectRatio(Math.max(0.65, Math.min(ratio, 2)));
     }
   };
 
   const handleTabChange = (tab: "video" | "gif" | "poster") => {
     setActiveTab(tab);
-    if (tab !== "video") {
-      setIsPlaying(false);
-    }
+    if (tab !== "video") setIsPlaying(false);
   };
+
+  const optimizedPoster = hasPoster ? (
+    <Image
+      src={thumbnail!}
+      alt={title}
+      fill
+      sizes="(max-width: 1024px) 100vw, 58vw"
+      priority
+      fetchPriority="high"
+      className="object-contain"
+      onLoad={handleImageLoad}
+    />
+  ) : null;
 
   return (
     <div className="space-y-6">
-      {/* Main Media Display */}
-      <div className="rounded-3xl border border-border/60 bg-black overflow-hidden shadow-2xl shadow-primary/5 transition-all duration-500 ease-in-out">
+      <div className="rounded-3xl border border-border/60 bg-black overflow-hidden shadow-2xl shadow-primary/5">
         {activeTab === "video" && videoUrl && (
           tweetId ? (
             <div className="flex justify-center p-6 bg-neutral-950/40 min-h-[300px] items-center">
@@ -58,41 +74,17 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
             </div>
           ) : !isPlaying ? (
             <AspectRatio ratio={16 / 9}>
-              <div 
+              <div
                 className="absolute inset-0 w-full h-full cursor-pointer group overflow-hidden"
                 onClick={() => setIsPlaying(true)}
               >
-                {/* Poster / Thumbnail Background */}
-                {thumbnail ? (
-                  <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
-                    <img
-                      src={thumbnail}
-                      alt=""
-                      className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-30 scale-110 pointer-events-none"
-                      loading="eager"
-                    />
-                    <img
-                      src={thumbnail}
-                      alt={`${title} video poster`}
-                      onLoad={handleImageLoad}
-                      className="relative max-w-full max-h-full object-contain z-10 transition-transform duration-700 group-hover:scale-105"
-                      loading="eager"
-                    />
-                  </div>
-                ) : (
-                  <div className="absolute inset-0 bg-neutral-900 flex items-center justify-center" />
-                )}
-                {/* Dark overlay */}
-                <div className="absolute inset-0 bg-black/40 group-hover:bg-black/50 transition-colors duration-300 z-20" />
-                
-                {/* Play Button Icon Overlay */}
+                {optimizedPoster}
+                <div className="absolute inset-0 bg-black/35 group-hover:bg-black/45 transition-colors duration-300 z-20" />
                 <div className="absolute inset-0 flex items-center justify-center z-30">
                   <div className="w-16 h-16 rounded-full bg-primary/95 text-white flex items-center justify-center shadow-xl shadow-primary/20 group-hover:scale-110 group-hover:bg-primary transition-all duration-300">
                     <Play className="w-7 h-7 fill-white translate-x-0.5" />
                   </div>
                 </div>
-
-                {/* Badge Overlay */}
                 <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md text-[10px] font-bold text-white uppercase tracking-widest px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-1.5 z-30">
                   <Eye className="w-3.5 h-3.5 text-primary animate-pulse" />
                   <span>Click to watch preview</span>
@@ -108,7 +100,7 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
                   autoPlay
                   className="absolute inset-0 w-full h-full object-cover"
                   poster={thumbnail || undefined}
-                  preload="auto"
+                  preload="metadata"
                 />
               ) : (
                 <iframe
@@ -128,16 +120,11 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
             <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
               <img
                 src={previewGif}
-                alt=""
-                className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-30 scale-110 pointer-events-none"
-                loading="lazy"
-              />
-              <img
-                src={previewGif}
-                alt={`${title} Preview GIF`}
+                alt={title + " Preview GIF"}
                 onLoad={handleImageLoad}
                 className="relative max-w-full max-h-full object-contain z-10"
                 loading="lazy"
+                decoding="async"
               />
             </div>
           </AspectRatio>
@@ -146,21 +133,7 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
         {activeTab === "poster" && thumbnail && (
           <AspectRatio ratio={aspectRatio}>
             <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
-              {/* Blurred Background */}
-              <img
-                src={thumbnail}
-                alt=""
-                className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-30 scale-110 pointer-events-none"
-                loading="lazy"
-              />
-              {/* Crisp Centered Image */}
-              <img
-                src={thumbnail}
-                alt={`${title} Poster`}
-                onLoad={handleImageLoad}
-                className="relative max-w-full max-h-full object-contain z-10"
-                loading="lazy"
-              />
+              {optimizedPoster}
             </div>
           </AspectRatio>
         )}
@@ -174,7 +147,6 @@ export default function ProductMediaSwitcher({ videoUrl, previewGif, thumbnail, 
         )}
       </div>
 
-      {/* Selector Thumbnails / Tabs (only shown if multiple formats exist) */}
       {((hasVideo ? 1 : 0) + (hasGif ? 1 : 0) + (hasPoster ? 1 : 0)) > 1 && (
         <div className="flex flex-wrap items-center gap-2.5">
           {hasVideo && (
