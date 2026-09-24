@@ -66,6 +66,9 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     case "title_desc":
       orderBy = [desc(products.title)];
       break;
+    case "featured_first":
+      orderBy = [desc(products.featured), desc(products.createdAt)];
+      break;
     case "newest":
     default:
       orderBy = [desc(products.createdAt)];
@@ -78,6 +81,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     publishedCountRes,
     draftCountRes,
     featuredCountRes,
+    notFeaturedCountRes,
     countResult,
     productsList,
   ] = await Promise.all([
@@ -85,6 +89,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     db.select({ count: sql<number>`count(*)` }).from(products).where(eq(products.published, true)),
     db.select({ count: sql<number>`count(*)` }).from(products).where(eq(products.published, false)),
     db.select({ count: sql<number>`count(*)` }).from(products).where(eq(products.featured, true)),
+    db.select({ count: sql<number>`count(*)` }).from(products).where(eq(products.featured, false)),
     db.select({ count: sql<number>`count(*)` }).from(products).where(whereClause),
     db.query.products.findMany({
       where: whereClause,
@@ -98,6 +103,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
   const publishedCount = Number(publishedCountRes[0]?.count || 0);
   const draftCount = Number(draftCountRes[0]?.count || 0);
   const featuredCount = Number(featuredCountRes[0]?.count || 0);
+  const notFeaturedCount = Number(notFeaturedCountRes[0]?.count || 0);
   const totalCount = Number(countResult[0]?.count || 0);
   const totalPages = Math.ceil(totalCount / limit);
 
@@ -142,6 +148,7 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
         publishedCount={publishedCount}
         draftCount={draftCount}
         featuredCount={featuredCount}
+        notFeaturedCount={notFeaturedCount}
         currentPage={currentPage}
         totalPages={totalPages}
         limit={limit}
