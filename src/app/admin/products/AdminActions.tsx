@@ -1,86 +1,77 @@
 "use client";
 
-import { Edit2, Trash2, Eye, EyeOff } from "lucide-react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { deleteProductAction, toggleProductPublishAction } from "@/lib/actions/products";
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Edit2, Eye, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { deleteProductAction } from "@/lib/actions/products";
+import { toast } from "sonner";
 
 export function AdminActions({
   productId,
   productSlug,
-  isPublished,
 }: {
   productId: string;
   productSlug: string;
-  isPublished: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const handleDelete = async () => {
-    if (confirm("Are you sure you want to delete this product?")) {
-      startTransition(async () => {
-        try {
-          await deleteProductAction(productId);
-        } catch (err) {
-          console.error("Delete failed:", err);
-          alert("Failed to delete product.");
-        } finally {
-          router.refresh();
-        }
-      });
-    }
-  };
+  function handleDelete() {
+    if (!window.confirm("Delete this product permanently? This cannot be undone.")) return;
 
-  const handleTogglePublish = async () => {
     startTransition(async () => {
       try {
-        await toggleProductPublishAction(productId);
-      } catch (err) {
-        console.error("Toggle publish failed:", err);
-        alert("Failed to update status.");
-      } finally {
+        await deleteProductAction(productId);
+        toast.success("Product deleted");
         router.refresh();
+      } catch (error) {
+        console.error("Delete failed:", error);
+        toast.error("Could not delete product");
       }
     });
-  };
+  }
 
   return (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex items-center justify-end gap-1.5">
       <Button
+        asChild
         variant="outline"
         size="icon"
-        disabled={isPending}
-        className={`h-8 w-8 cursor-pointer ${isPublished ? "text-amber-500 hover:text-amber-600" : "text-emerald-500 hover:text-emerald-600"}`}
-        title={isPublished ? "Convert to Draft" : "Publish Now"}
-        onClick={handleTogglePublish}
+        className="h-9 w-9 rounded-lg"
+        aria-label="View product"
+        title="View public product"
       >
-        {isPublished ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-      </Button>
-
-      <Button asChild variant="outline" size="icon" className="h-8 w-8" title="View Item">
-        <Link href={`/products/${productSlug}`} target="_blank">
-          <Eye className="w-3.5 h-3.5" />
+        <Link href={`/products/${productSlug}`} target="_blank" rel="noopener noreferrer">
+          <Eye className="h-3.5 w-3.5" />
         </Link>
       </Button>
 
-      <Button asChild variant="outline" size="icon" className="h-8 w-8" title="Edit Item">
+      <Button
+        asChild
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 rounded-lg"
+        aria-label="Edit product"
+        title="Edit product"
+      >
         <Link href={`/admin/products/${productId}/edit`}>
-          <Edit2 className="w-3.5 h-3.5" />
+          <Edit2 className="h-3.5 w-3.5" />
         </Link>
       </Button>
-      
+
       <Button
+        type="button"
         variant="outline"
         size="icon"
         disabled={isPending}
-        className="h-8 w-8 text-destructive hover:bg-destructive/10 border-destructive/20 cursor-pointer"
-        title="Delete Item"
         onClick={handleDelete}
+        className="h-9 w-9 rounded-lg border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        aria-label="Delete product"
+        title="Delete product"
       >
-        <Trash2 className="w-3.5 h-3.5" />
+        <Trash2 className="h-3.5 w-3.5" />
       </Button>
     </div>
   );
