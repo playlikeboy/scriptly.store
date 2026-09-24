@@ -333,6 +333,59 @@ export async function bulkSetProductsPublishAction(ids: string[], published: boo
   return { success: true, count: ids.length };
 }
 
+export async function toggleProductFeaturedAction(id: string) {
+  const isUserAdmin = await isAdmin();
+  if (!isUserAdmin) {
+    throw new Error("Unauthorized: Admin access required.");
+  }
+
+  const existing = await db.query.products.findFirst({
+    where: eq(products.id, id),
+  });
+
+  if (!existing) {
+    throw new Error("Product not found");
+  }
+
+  const featured = !existing.featured;
+
+  await db
+    .update(products)
+    .set({
+      featured,
+      updatedAt: new Date(),
+    })
+    .where(eq(products.id, id));
+
+  revalidatePath("/");
+  revalidatePath("/featured");
+  revalidatePath(`/products/${existing.slug}`);
+  revalidatePath("/admin/products");
+
+  return { success: true, featured };
+}
+
+export async function bulkSetProductsFeaturedAction(ids: string[], featured: boolean) {
+  const isUserAdmin = await isAdmin();
+  if (!isUserAdmin) {
+    throw new Error("Unauthorized: Admin access required.");
+  }
+  if (!ids || ids.length === 0) return { success: true, count: 0 };
+
+  await db
+    .update(products)
+    .set({
+      featured,
+      updatedAt: new Date(),
+    })
+    .where(inArray(products.id, ids));
+
+  revalidatePath("/");
+  revalidatePath("/featured");
+  revalidatePath("/admin/products");
+  return { success: true, count: ids.length, featured };
+}
+
 import { categories as categoriesTable, subcategories } from "@/db/schema";
 
 export async function ensureCategoriesSeeded() {
