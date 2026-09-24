@@ -352,9 +352,9 @@ export default function ProductForm({ categories, subcategories, isCreatorConsol
         </div>
 
         <div className="flex items-center gap-3">
-          {isEdit && slug && (
+          {isEdit && initialData?.slug && (
             <Link
-              href={`/products/${slug}`}
+              href={`/products/${initialData.slug}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-border/70 bg-card px-3.5 text-xs font-bold text-foreground transition-colors hover:bg-muted"
