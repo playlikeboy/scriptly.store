@@ -7,7 +7,7 @@ import { uploadToGithubReleaseAction } from "@/lib/actions/github-releases";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Save, Upload, Loader2, Info, Image as ImageIcon, Sparkles, Globe, FileUp, FileArchive, Video, Link as LinkIcon, HelpCircle, Settings, FileText } from "lucide-react";
+import { ArrowLeft, Eye, Save, Upload, Loader2, Info, Image as ImageIcon, Sparkles, Globe, FileUp, FileArchive, Video, Link as LinkIcon, HelpCircle, Settings, FileText } from "lucide-react";
 import Link from "next/link";
 import { marked } from "marked";
 import { Tweet } from "react-tweet";
@@ -352,6 +352,18 @@ export default function ProductForm({ categories, subcategories, isCreatorConsol
         </div>
 
         <div className="flex items-center gap-3">
+          {isEdit && slug && (
+            <Link
+              href={`/products/${slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-border/70 bg-card px-3.5 text-xs font-bold text-foreground transition-colors hover:bg-muted"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              View Post
+            </Link>
+          )}
+
           {/* Hire Me helper link */}
           <Link
             href="/hire-me"
@@ -1086,28 +1098,51 @@ export default function ProductForm({ categories, subcategories, isCreatorConsol
 
             {!isCreatorConsole ? (
               <>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-bold text-neutral-300 uppercase">Featured Spotlight</h4>
-                    <p className="text-[9px] text-neutral-500">Spotlight this product on the home landing</p>
-                  </div>
-                  <input type="checkbox" checked={featured} onChange={(e) => setFeatured(e.target.checked)} className="w-4.5 h-4.5 rounded accent-white cursor-pointer" />
-                </div>
-
-                <div className="flex items-center justify-between pt-4 border-t border-neutral-800">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-bold text-neutral-300 uppercase">Publicly Published</h4>
-                    <p className="text-[9px] text-neutral-500">Allow customers to view and purchase this item</p>
-                  </div>
-                  <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} className="w-4.5 h-4.5 rounded accent-white cursor-pointer" />
-                </div>
-
-                <div className="flex items-center justify-between pt-4 border-t border-neutral-800">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-bold text-neutral-300 uppercase">Show Trust Stats</h4>
-                    <p className="text-[9px] text-neutral-500">Show views, downloads, and saves counts on detail page</p>
-                  </div>
-                  <input type="checkbox" checked={showStats} onChange={(e) => setShowStats(e.target.checked)} className="w-4.5 h-4.5 rounded accent-white cursor-pointer" />
+                <div className="grid gap-2">
+                  {[
+                    {
+                      label: "Featured Spotlight",
+                      description: "Show this product in featured marketplace placements.",
+                      checked: featured,
+                      onChange: setFeatured,
+                    },
+                    {
+                      label: "Publicly Published",
+                      description: "Make the product visible and purchasable to customers.",
+                      checked: published,
+                      onChange: setPublished,
+                    },
+                    {
+                      label: "Show Trust Stats",
+                      description: "Display views, downloads, and saves on the public product page.",
+                      checked: showStats,
+                      onChange: setShowStats,
+                    },
+                  ].map((setting) => (
+                    <div
+                      key={setting.label}
+                      className="flex items-center justify-between gap-4 rounded-xl border border-neutral-800 bg-neutral-950/45 p-3.5"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <h4 className="text-xs font-bold text-neutral-200">{setting.label}</h4>
+                        <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                          {setting.description}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={setting.checked}
+                        aria-label={`${setting.label}: ${setting.checked ? "On" : "Off"}`}
+                        onClick={() => setting.onChange(!setting.checked)}
+                        className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${setting.checked ? "border-primary bg-primary" : "border-neutral-700 bg-neutral-800"}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${setting.checked ? "translate-x-5" : "translate-x-0.5"}`}
+                        />
+                      </button>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="pt-4 border-t border-neutral-800 space-y-4">
