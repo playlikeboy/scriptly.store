@@ -75,6 +75,7 @@ export default function AdminSearchSort() {
             <SelectItem value="oldest">Oldest First</SelectItem>
             <SelectItem value="price_asc">Price: Low to High</SelectItem>
             <SelectItem value="price_desc">Price: High to Low</SelectItem>
+            <SelectItem value="featured_first">Featured First</SelectItem>
             <SelectItem value="title_asc">Title: A-Z</SelectItem>
             <SelectItem value="title_desc">Title: Z-A</SelectItem>
           </SelectContent>
