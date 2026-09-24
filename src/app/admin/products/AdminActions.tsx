@@ -1,22 +1,20 @@
 "use client";
 
-import { Edit2, Trash2, Eye, EyeOff, Star } from "lucide-react";
+import { Edit2, Trash2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { deleteProductAction, toggleProductPublishAction, toggleProductFeaturedAction } from "@/lib/actions/products";
+import { deleteProductAction, toggleProductPublishAction } from "@/lib/actions/products";
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-export function AdminActions({ 
-  productId, 
-  productSlug, 
+export function AdminActions({
+  productId,
+  productSlug,
   isPublished,
-  isFeatured,
 }: {
   productId: string;
   productSlug: string;
   isPublished: boolean;
-  isFeatured: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -49,33 +47,8 @@ export function AdminActions({
     });
   };
 
-  const handleToggleFeatured = () => {
-    startTransition(async () => {
-      try {
-        await toggleProductFeaturedAction(productId);
-      } catch (err) {
-        console.error("Toggle featured failed:", err);
-        alert("Failed to update featured status.");
-      } finally {
-        router.refresh();
-      }
-    });
-  };
-
   return (
     <div className="flex items-center justify-end gap-2">
-      <Button
-        variant="outline"
-        size="icon"
-        disabled={isPending}
-        className={`h-8 w-8 cursor-pointer ${isFeatured ? "text-amber-500 hover:text-amber-600 border-amber-500/20 bg-amber-500/5" : "text-muted-foreground hover:text-amber-500"}`}
-        title={isFeatured ? "Remove from Featured" : "Feature Product"}
-        aria-label={isFeatured ? "Remove from Featured" : "Feature Product"}
-        onClick={handleToggleFeatured}
-      >
-        <Star className={`w-3.5 h-3.5 ${isFeatured ? "fill-current" : ""}`} />
-      </Button>
-
       <Button
         variant="outline"
         size="icon"
