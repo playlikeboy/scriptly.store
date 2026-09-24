@@ -156,7 +156,6 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
         limit={limit}
         currentStatus={currentStatus}
         currentSearch={currentSearch}
-        currentSort={currentSort}
       />
     </div>
   );
