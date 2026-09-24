@@ -44,6 +44,8 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
     conditions.push(eq(products.published, false));
   } else if (currentStatus === "featured") {
     conditions.push(eq(products.featured, true));
+  } else if (currentStatus === "unfeatured") {
+    conditions.push(eq(products.featured, false));
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
