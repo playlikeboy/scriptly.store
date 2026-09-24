@@ -1,4 +1,5 @@
 name: Deploy to Cloudflare
+# Production deploy keeps Cloudflare runtime secrets synchronized with GitHub Actions.
 
 on:
   push:
