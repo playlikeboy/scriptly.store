@@ -462,7 +462,6 @@ export default function AdminProductsTable({
                         productId={prod.id} 
                         productSlug={prod.slug} 
                         isPublished={prod.published}
-                        isFeatured={prod.featured}
                       />
                     </TableCell>
                   </TableRow>
