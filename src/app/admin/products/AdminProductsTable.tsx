@@ -1,21 +1,41 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertCircle,
+  Check,
+  CheckSquare,
+  Copy,
+  Eye,
+  EyeOff,
+  MinusSquare,
+  Package,
+  Star,
+  Square,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { AdminActions } from "@/app/admin/products/AdminActions";
 import {
   bulkDeleteProductsAction,
-  bulkSetProductsPublishAction,
   bulkSetProductsFeaturedAction,
-  toggleProductPublishAction,
+  bulkSetProductsPublishAction,
   toggleProductFeaturedAction,
+  toggleProductPublishAction,
 } from "@/lib/actions/products";
-import { Trash2, Eye, EyeOff, Star, CheckSquare, Square, MinusSquare, AlertCircle, Copy, Check } from "lucide-react";
 
 export interface AdminProductItem {
   id: string;
@@ -43,7 +63,36 @@ interface AdminProductsTableProps {
   limit: number;
   currentStatus: string;
   currentSearch: string;
-  currentSort: string;
+}
+
+const filterOptions = [
+  { value: "all", label: "All", key: "allCount" },
+  { value: "published", label: "Published", key: "publishedCount" },
+  { value: "draft", label: "Drafts", key: "draftCount" },
+  { value: "featured", label: "Featured", key: "featuredCount" },
+  { value: "unfeatured", label: "Not featured", key: "notFeaturedCount" },
+] as const;
+
+function formatPrice(price: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(price / 100);
+}
+
+function formatDate(value: Date | string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function getPageNumbers(currentPage: number, totalPages: number) {
+  if (totalPages <= 5) return Array.from({ length: totalPages }, (_, i) => i + 1);
+  const pages = new Set([1, totalPages, currentPage, currentPage - 1, currentPage + 1]);
+  return Array.from(pages).filter((page) => page >= 1 && page <= totalPages).sort((a, b) => a - b);
 }
 
 export default function AdminProductsTable({
@@ -59,7 +108,6 @@ export default function AdminProductsTable({
   limit,
   currentStatus,
   currentSearch,
-  currentSort,
 }: AdminProductsTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -67,457 +115,449 @@ export default function AdminProductsTable({
   const [isPending, startTransition] = useTransition();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const offset = (currentPage - 1) * limit;
-  const isAllOnPageSelected = products.length > 0 && products.every((p) => selectedIds.includes(p.id));
-  const isSomeSelected = products.some((p) => selectedIds.includes(p.id)) && !isAllOnPageSelected;
+  const counts = useMemo(
+    () => ({
+      allCount,
+      publishedCount,
+      draftCount,
+      featuredCount,
+      notFeaturedCount,
+    }),
+    [allCount, publishedCount, draftCount, featuredCount, notFeaturedCount]
+  );
 
-  const handleSelectAllOnPage = () => {
-    if (isAllOnPageSelected) {
-      setSelectedIds((prev) => prev.filter((id) => !products.some((p) => p.id === id)));
-    } else {
-      const pageIds = products.map((p) => p.id);
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
-    }
-  };
+  const selectedCount = selectedIds.length;
+  const isAllOnPageSelected =
+    products.length > 0 && products.every((product) => selectedIds.includes(product.id));
+  const isSomeSelected =
+    products.some((product) => selectedIds.includes(product.id)) && !isAllOnPageSelected;
 
-  const handleToggleSelect = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  };
-
-  const handleFilterTab = (status: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (status === "all") {
-      params.delete("status");
-    } else {
-      params.set("status", status);
-    }
+  function updateQuery(params: URLSearchParams) {
     params.delete("page");
-    setSelectedIds([]);
-    router.push(`/admin/products?${params.toString()}`);
-  };
+    router.push(`/admin/products?${params.toString()}`, { scroll: false });
+  }
 
-  const handleBulkDelete = () => {
-    if (selectedIds.length === 0) return;
-    const confirmMsg = `Are you sure you want to permanently delete ${selectedIds.length} selected product${selectedIds.length > 1 ? "s" : ""}?`;
-    if (confirm(confirmMsg)) {
-      startTransition(async () => {
-        try {
-          await bulkDeleteProductsAction(selectedIds);
-          setSelectedIds([]);
-          router.refresh();
-        } catch (err) {
-          console.error("Bulk delete failed:", err);
-          alert("Failed to delete selected products.");
-        }
-      });
-    }
-  };
-
-  const handleBulkSetPublish = (publish: boolean) => {
-    if (selectedIds.length === 0) return;
-    startTransition(async () => {
-      try {
-        await bulkSetProductsPublishAction(selectedIds, publish);
-        setSelectedIds([]);
-        router.refresh();
-      } catch (err) {
-        console.error("Bulk update failed:", err);
-        alert("Failed to update products status.");
-      }
-    });
-  };
-
-  const handleQuickTogglePublish = (productId: string) => {
-    startTransition(async () => {
-      try {
-        await toggleProductPublishAction(productId);
-        router.refresh();
-      } catch (err) {
-        console.error("Status toggle failed:", err);
-      }
-    });
-  };
-
-  const handleBulkSetFeatured = (featured: boolean) => {
-    if (selectedIds.length === 0) return;
-    startTransition(async () => {
-      try {
-        await bulkSetProductsFeaturedAction(selectedIds, featured);
-        setSelectedIds([]);
-        router.refresh();
-      } catch (err) {
-        console.error("Bulk featured update failed:", err);
-        alert("Failed to update featured status.");
-      }
-    });
-  };
-
-  const handleQuickToggleFeatured = (productId: string) => {
-    startTransition(async () => {
-      try {
-        await toggleProductFeaturedAction(productId);
-        router.refresh();
-      } catch (err) {
-        console.error("Featured toggle failed:", err);
-        alert("Failed to update featured status.");
-      }
-    });
-  };
-
-  const handleCopyId = (id: string) => {
-    navigator.clipboard.writeText(id);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const getPageLink = (pageNum: number) => {
+  function handleFilterTab(status: string) {
     const params = new URLSearchParams(searchParams.toString());
-    if (pageNum > 1) params.set("page", pageNum.toString());
-    else params.delete("page");
+    if (status === "all") params.delete("status");
+    else params.set("status", status);
+    setSelectedIds([]);
+    updateQuery(params);
+  }
+
+  function toggleSelectAll() {
+    if (isAllOnPageSelected) {
+      setSelectedIds((current) => current.filter((id) => !products.some((product) => product.id === id)));
+      return;
+    }
+    setSelectedIds((current) => Array.from(new Set([...current, ...products.map((product) => product.id)])));
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  }
+
+  async function runBulkAction(action: () => Promise<unknown>, success: string) {
+    if (!selectedCount) return;
+    startTransition(async () => {
+      try {
+        await action();
+        setSelectedIds([]);
+        toast.success(success);
+        router.refresh();
+      } catch (error) {
+        console.error(error);
+        toast.error("The bulk update failed. Please try again.");
+      }
+    });
+  }
+
+  function handleBulkDelete() {
+    if (!selectedCount) return;
+    const message = `Delete ${selectedCount} selected product${selectedCount === 1 ? "" : "s"} permanently?`;
+    if (!window.confirm(message)) return;
+    runBulkAction(() => bulkDeleteProductsAction(selectedIds), `${selectedCount} product${selectedCount === 1 ? "" : "s"} deleted`);
+  }
+
+  function handleCopyId(id: string) {
+    navigator.clipboard
+      .writeText(id)
+      .then(() => {
+        setCopiedId(id);
+        window.setTimeout(() => setCopiedId(null), 1800);
+      })
+      .catch(() => toast.error("Could not copy product ID"));
+  }
+
+  function togglePublish(id: string) {
+    startTransition(async () => {
+      try {
+        const product = products.find((item) => item.id === id);
+        await toggleProductPublishAction(id);
+        toast.success(product?.published ? "Product moved to draft" : "Product published");
+        router.refresh();
+      } catch (error) {
+        console.error(error);
+        toast.error("Could not update visibility");
+      }
+    });
+  }
+
+  function toggleFeatured(id: string) {
+    startTransition(async () => {
+      try {
+        const product = products.find((item) => item.id === id);
+        await toggleProductFeaturedAction(id);
+        toast.success(product?.featured ? "Removed from Featured" : "Added to Featured");
+        router.refresh();
+      } catch (error) {
+        console.error(error);
+        toast.error("Could not update featured status");
+      }
+    });
+  }
+
+  const pageStart = totalCount === 0 ? 0 : (currentPage - 1) * limit + 1;
+  const pageEnd = Math.min((currentPage - 1) * limit + products.length, totalCount);
+  const pageNumbers = getPageNumbers(currentPage, totalPages);
+
+  function pageHref(page: number) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (page <= 1) params.delete("page");
+    else params.set("page", String(page));
     return `/admin/products?${params.toString()}`;
-  };
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Filter Tabs Bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/60 pb-3">
-        <button
-          type="button"
-          onClick={() => handleFilterTab("all")}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            currentStatus === "all"
-              ? "bg-foreground text-background shadow-xs"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-          }`}
-        >
-          <span>All Products</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${currentStatus === "all" ? "bg-background/20 text-background" : "bg-secondary text-foreground"}`}>
-            {allCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleFilterTab("published")}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            currentStatus === "published"
-              ? "bg-foreground text-background shadow-xs"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-          }`}
-        >
-          <span>Published</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${currentStatus === "published" ? "bg-background/20 text-background" : "bg-secondary text-foreground"}`}>
-            {publishedCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleFilterTab("draft")}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            currentStatus === "draft"
-              ? "bg-foreground text-background shadow-xs"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-          }`}
-        >
-          <span>Drafts</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${currentStatus === "draft" ? "bg-background/20 text-background" : "bg-amber-500/15 text-amber-500"}`}>
-            {draftCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleFilterTab("featured")}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            currentStatus === "featured"
-              ? "bg-foreground text-background shadow-xs"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-          }`}
-        >
-          <span>Featured</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${currentStatus === "featured" ? "bg-background/20 text-background" : "bg-secondary text-foreground"}`}>
-            {featuredCount}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => handleFilterTab("unfeatured")}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            currentStatus === "unfeatured"
-              ? "bg-foreground text-background shadow-xs"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-          }`}
-        >
-          <span>Not Featured</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${currentStatus === "unfeatured" ? "bg-background/20 text-background" : "bg-secondary text-foreground"}`}>
-            {notFeaturedCount}
-          </span>
-        </button>
+    <div className="space-y-4">
+      <div className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none]">
+        {filterOptions.map((filter) => {
+          const active = currentStatus === filter.value;
+          return (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => handleFilterTab(filter.value)}
+              className={[
+                "shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                active
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              {filter.label}
+              <span className={active ? "ml-1.5 opacity-70" : "ml-1.5 text-muted-foreground/70"}>
+                {counts[filter.key]}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Floating Bulk Actions Bar */}
-      {selectedIds.length > 0 && (
-        <div className="sticky top-3 z-30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 px-4 sm:px-5 rounded-2xl bg-foreground text-background shadow-xl ring-1 ring-background/10 animate-in fade-in slide-in-from-top-2 duration-200">
+      {selectedCount > 0 && (
+        <div className="sticky top-3 z-20 flex flex-col gap-3 rounded-xl border border-border/60 bg-background/95 p-3 shadow-lg backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <span className="font-bold text-xs">
-              {selectedIds.length} product{selectedIds.length > 1 ? "s" : ""} selected
+            <span className="text-xs font-semibold">
+              {selectedCount} selected
             </span>
             <button
               type="button"
               onClick={() => setSelectedIds([])}
-              className="text-[11px] underline opacity-80 hover:opacity-100 cursor-pointer"
+              className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             >
-              Deselect All
+              Clear
             </button>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="hidden sm:inline text-[10px] font-black uppercase tracking-widest opacity-55 mr-1">Visibility</span>
-            <Button type="button" size="xs" variant="secondary" disabled={isPending} onClick={() => handleBulkSetPublish(true)} className="rounded-lg font-bold text-[11px]">
-              <Eye className="w-3.5 h-3.5 mr-1" />Publish
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <Button size="sm" variant="outline" disabled={isPending} onClick={() => runBulkAction(() => bulkSetProductsPublishAction(selectedIds, true), "Products published")}>
+              <Eye className="mr-1.5 h-3.5 w-3.5" /> Publish
             </Button>
-            <Button type="button" size="xs" variant="secondary" disabled={isPending} onClick={() => handleBulkSetPublish(false)} className="rounded-lg font-bold text-[11px]">
-              <EyeOff className="w-3.5 h-3.5 mr-1" />Draft
+            <Button size="sm" variant="outline" disabled={isPending} onClick={() => runBulkAction(() => bulkSetProductsPublishAction(selectedIds, false), "Products moved to draft")}>
+              <EyeOff className="mr-1.5 h-3.5 w-3.5" /> Draft
             </Button>
-
-            <span className="hidden sm:inline text-[10px] font-black uppercase tracking-widest opacity-55 ml-1 mr-1">Featured</span>
-            <Button type="button" size="xs" variant="secondary" disabled={isPending} onClick={() => handleBulkSetFeatured(true)} className="rounded-lg font-bold text-[11px]">
-              <Star className="w-3.5 h-3.5 mr-1" />Feature
+            <Button size="sm" variant="outline" disabled={isPending} onClick={() => runBulkAction(() => bulkSetProductsFeaturedAction(selectedIds, true), "Products featured")}>
+              <Star className="mr-1.5 h-3.5 w-3.5" /> Feature
             </Button>
-            <Button type="button" size="xs" variant="secondary" disabled={isPending} onClick={() => handleBulkSetFeatured(false)} className="rounded-lg font-bold text-[11px]">
-              <Star className="w-3.5 h-3.5 mr-1" />Unfeature
+            <Button size="sm" variant="outline" disabled={isPending} onClick={() => runBulkAction(() => bulkSetProductsFeaturedAction(selectedIds, false), "Products unfeatured")}>
+              <Star className="mr-1.5 h-3.5 w-3.5" /> Unfeature
             </Button>
-
-            <Button type="button" size="xs" variant="destructive" disabled={isPending} onClick={handleBulkDelete} className="rounded-lg font-bold text-[11px]">
-              <Trash2 className="w-3.5 h-3.5 mr-1" />Delete
+            <Button size="sm" variant="outline" disabled={isPending} onClick={handleBulkDelete} className="text-destructive hover:bg-destructive/10 hover:text-destructive">
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
             </Button>
           </div>
         </div>
       )}
 
-      {/* Products Table */}
       {totalCount === 0 ? (
-        <div className="text-center py-20 border border-dashed border-border/60 rounded-3xl bg-card/20 space-y-3">
-          <AlertCircle className="w-8 h-8 mx-auto text-muted-foreground" />
-          <p className="text-sm font-semibold text-foreground">
-            {currentSearch ? `No results found for "${currentSearch}"` : "No products found in this category."}
-          </p>
-          <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-            Try adjusting your search terms or switch the status filter tab above.
-          </p>
-        </div>
+        <Card className="border-dashed bg-card/30">
+          <div className="flex flex-col items-center justify-center px-5 py-16 text-center">
+            <Package className="mb-3 h-9 w-9 text-muted-foreground/35" />
+            <p className="text-sm font-semibold">{currentSearch ? `No products match “${currentSearch}”.` : "No products match this filter."}</p>
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">
+              Try another search or switch the catalog filter.
+            </p>
+          </div>
+        </Card>
       ) : (
-        <Card className="rounded-3xl border border-border/50 bg-card/60 backdrop-blur-md overflow-hidden shadow-xs">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow className="border-border/50 hover:bg-transparent">
-                {/* First Column: Checkbox */}
-                <TableHead className="w-12 px-4 text-center">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllOnPage}
-                    className="p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-                    aria-label="Select all on this page"
-                  >
-                    {isAllOnPageSelected ? (
-                      <CheckSquare className="w-4 h-4 text-primary" />
-                    ) : isSomeSelected ? (
-                      <MinusSquare className="w-4 h-4 text-primary" />
-                    ) : (
-                      <Square className="w-4 h-4" />
-                    )}
-                  </button>
-                </TableHead>
-
-                <TableHead className="w-[70%] md:w-[42%] px-3 sm:px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Product</TableHead>
-                <TableHead className="hidden md:table-cell px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Category</TableHead>
-                <TableHead className="hidden md:table-cell px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Price</TableHead>
-                <TableHead className="px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Status</TableHead>
-                <TableHead className="px-4 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {products.map((prod) => {
-                const isSelected = selectedIds.includes(prod.id);
-                return (
-                  <TableRow
-                    key={prod.id}
-                    className={`border-border/40 transition-colors group ${
-                      isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/25"
-                    }`}
-                  >
-                    {/* Checkbox First */}
-                    <TableCell className="w-12 px-4 text-center">
+        <>
+          <Card className="hidden overflow-hidden border-border/60 bg-card/40 shadow-sm md:block">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/35 hover:bg-muted/35">
+                    <TableHead className="w-12 px-3">
                       <button
                         type="button"
-                        onClick={() => handleToggleSelect(prod.id)}
-                        className="p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-                        aria-label={`Select ${prod.title}`}
+                        onClick={toggleSelectAll}
+                        aria-label="Select all products on this page"
+                        className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4 text-primary" />
+                        {isAllOnPageSelected ? (
+                          <CheckSquare className="h-4 w-4" />
+                        ) : isSomeSelected ? (
+                          <MinusSquare className="h-4 w-4" />
                         ) : (
-                          <Square className="w-4 h-4" />
+                          <Square className="h-4 w-4" />
                         )}
                       </button>
-                    </TableCell>
-
-                    {/* Thumbnail & Product Details */}
-                    <TableCell className="px-3 sm:px-4 py-3 sm:py-4">
-                      <div className="flex items-center gap-3.5">
-                        <div className="relative w-12 h-12 rounded-xl border border-border/50 bg-muted/50 overflow-hidden flex-shrink-0">
-                          {prod.thumbnail ? (
-                            <img
-                              src={prod.thumbnail}
-                              alt=""
-                              className="w-full h-full object-cover"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[9px] font-bold uppercase text-muted-foreground">
-                              No Img
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <Link
-                            href={`/admin/products/${prod.id}/edit`}
-                            className="font-semibold text-foreground text-sm hover:underline group-hover:text-primary transition-colors block truncate max-w-[280px] sm:max-w-md"
-                          >
-                            {prod.title}
-                          </Link>
-                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-muted-foreground mt-1">
-                            <span className="md:hidden truncate max-w-[120px]">{prod.category}</span>
-                            <span className="md:hidden opacity-50">•</span>
-                            <span className="md:hidden">{(prod.price / 100).toFixed(2)}</span>
-                            <span className="opacity-50">•</span>
-                            <span className="opacity-70">ID: {prod.id.slice(0, 8)}...</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyId(prod.id)}
-                              className="hover:text-foreground transition-colors cursor-pointer"
-                              title="Copy ID"
-                            >
-                              {copiedId === prod.id ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                            <span className="opacity-50">•</span>
-                            <span className="opacity-70">v{prod.version}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </TableCell>
-
-                    {/* Category */}
-                    <TableCell className="hidden md:table-cell px-4">
-                      <Badge variant="secondary" className="rounded-full font-medium text-[10px] uppercase border-border/40 px-2.5">
-                        {prod.category}
-                      </Badge>
-                    </TableCell>
-
-                    {/* Price */}
-                    <TableCell className="hidden md:table-cell px-4 font-mono font-bold text-foreground text-sm">
-                      ${(prod.price / 100).toFixed(2)}
-                    </TableCell>
-
-                    {/* 1-Click Interactive Status Badge */}
-                    <TableCell className="px-4">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleQuickTogglePublish(prod.id)}
-                          disabled={isPending}
-                          title="Click to toggle status"
-                          className="cursor-pointer transition-transform hover:scale-105"
-                        >
-                          {prod.published ? (
-                            <Badge variant="default" className="rounded-full text-[9px] font-bold uppercase px-2.5 bg-foreground text-background">
-                              Public
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="rounded-full text-[9px] font-bold uppercase px-2.5 text-amber-500 border-amber-500/30 bg-amber-500/10">
-                              Draft
-                            </Badge>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickToggleFeatured(prod.id)}
-                          disabled={isPending}
-                          title={prod.featured ? "Remove from Featured" : "Feature Product"}
-                          aria-label={prod.featured ? "Remove from Featured" : "Feature Product"}
-                          className="inline-flex items-center gap-1 rounded-full border border-amber-500/25 px-2 py-1 text-[9px] font-bold uppercase text-amber-500 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
-                        >
-                          <Star className={prod.featured ? "w-3 h-3 fill-current" : "w-3 h-3"} />
-                          <span>{prod.featured ? "Featured" : "Feature"}</span>
-                        </button>
-                      </div>
-                    </TableCell>
-
-                    {/* Action Buttons */}
-                    <TableCell className="px-4 text-right">
-                      <AdminActions 
-                        productId={prod.id} 
-                        productSlug={prod.slug} 
-                        isPublished={prod.published}
-                      />
-                    </TableCell>
+                    </TableHead>
+                    <TableHead className="min-w-[320px] text-xs font-semibold">Product</TableHead>
+                    <TableHead className="text-xs font-semibold">Category</TableHead>
+                    <TableHead className="text-xs font-semibold">Price</TableHead>
+                    <TableHead className="text-xs font-semibold">Visibility</TableHead>
+                    <TableHead className="text-xs font-semibold">Spotlight</TableHead>
+                    <TableHead className="w-[136px] text-right text-xs font-semibold">Actions</TableHead>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t border-border/40 bg-muted/5">
-              <div className="text-xs text-muted-foreground font-medium">
-                Showing <span className="font-bold text-foreground">{offset + 1}</span> to{" "}
-                <span className="font-bold text-foreground">
-                  {Math.min(offset + limit, totalCount)}
-                </span>{" "}
-                of <span className="font-bold text-foreground">{totalCount}</span> products
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  asChild
-                  variant="outline"
-                  size="sm"
-                  className={`rounded-xl font-bold cursor-pointer ${currentPage <= 1 ? "pointer-events-none opacity-50" : ""}`}
-                >
-                  <Link href={getPageLink(currentPage - 1)}>Previous</Link>
-                </Button>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: totalPages }).map((_, idx) => {
-                    const pageNum = idx + 1;
-                    const isCurrent = pageNum === currentPage;
+                </TableHeader>
+                <TableBody>
+                  {products.map((product) => {
+                    const selected = selectedIds.includes(product.id);
                     return (
-                      <Button
-                        key={pageNum}
-                        asChild
-                        variant={isCurrent ? "default" : "outline"}
-                        size="sm"
-                        className="h-8 w-8 p-0 rounded-xl font-bold cursor-pointer"
-                      >
-                        <Link href={getPageLink(pageNum)}>{pageNum}</Link>
-                      </Button>
+                      <TableRow key={product.id} className={selected ? "bg-primary/5" : ""}>
+                        <TableCell className="px-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleSelect(product.id)}
+                            aria-label={`Select ${product.title}`}
+                            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            {selected ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
+                          </button>
+                        </TableCell>
+
+                        <TableCell className="py-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="h-12 w-16 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
+                              {product.thumbnail ? (
+                                <img src={product.thumbnail} alt="" className="h-full w-full object-cover" loading="lazy" />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-[9px] font-semibold text-muted-foreground">NO IMAGE</div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <Link
+                                href={`/admin/products/${product.id}/edit`}
+                                className="block truncate text-sm font-semibold hover:text-primary"
+                              >
+                                {product.title}
+                              </Link>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                <span>{product.category}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>v{product.version}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>{formatDate(product.createdAt)}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyId(product.id)}
+                                  className="inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
+                                  title="Copy product ID"
+                                >
+                                  {copiedId === product.id ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                                  ID
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <Badge variant="secondary" className="rounded-full text-[10px] font-medium">
+                            {product.category}
+                          </Badge>
+                        </TableCell>
+
+                        <TableCell className="whitespace-nowrap text-sm font-semibold tabular-nums">
+                          {formatPrice(product.price)}
+                        </TableCell>
+
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={() => togglePublish(product.id)}
+                            disabled={isPending}
+                            role="switch"
+                            aria-checked={product.published}
+                            title={product.published ? "Click to move to draft" : "Click to publish"}
+                            className={[
+                              "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50",
+                              product.published
+                                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                : "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                            ].join(" ")}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${product.published ? "bg-emerald-500" : "bg-amber-500"}`} />
+                            {product.published ? "Published" : "Draft"}
+                          </button>
+                        </TableCell>
+
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={() => toggleFeatured(product.id)}
+                            disabled={isPending}
+                            role="switch"
+                            aria-checked={product.featured}
+                            title={product.featured ? "Remove from Featured" : "Add to Featured"}
+                            className={[
+                              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50",
+                              product.featured
+                                ? "border-primary/25 bg-primary/10 text-primary"
+                                : "border-border/70 bg-background text-muted-foreground hover:border-primary/30 hover:text-primary",
+                            ].join(" ")}
+                          >
+                            <Star className={`h-3.5 w-3.5 ${product.featured ? "fill-current" : ""}`} />
+                            {product.featured ? "Featured" : "Feature"}
+                          </button>
+                        </TableCell>
+
+                        <TableCell className="text-right">
+                          <AdminActions productId={product.id} productSlug={product.slug} />
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </div>
-                <Button
-                  asChild
-                  variant="outline"
-                  size="sm"
-                  className={`rounded-xl font-bold cursor-pointer ${currentPage >= totalPages ? "pointer-events-none opacity-50" : ""}`}
-                >
-                  <Link href={getPageLink(currentPage + 1)}>Next</Link>
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          <div className="space-y-3 md:hidden">
+            {products.map((product) => {
+              const selected = selectedIds.includes(product.id);
+              return (
+                <Card key={product.id} className={selected ? "border-primary/35 bg-primary/5" : "border-border/60 bg-card/40"}>
+                  <div className="p-3.5">
+                    <div className="flex items-start gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleSelect(product.id)}
+                        aria-label={`Select ${product.title}`}
+                        className="mt-1 shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        {selected ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
+                      </button>
+                      <div className="h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
+                        {product.thumbnail ? (
+                          <img src={product.thumbnail} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-[9px] font-semibold text-muted-foreground">NO IMAGE</div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/admin/products/${product.id}/edit`} className="line-clamp-2 text-sm font-semibold leading-snug hover:text-primary">
+                          {product.title}
+                        </Link>
+                        <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                          {product.category} · v{product.version} · {formatPrice(product.price)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => togglePublish(product.id)}
+                        disabled={isPending}
+                        className={[
+                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-semibold",
+                          product.published
+                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                        ].join(" ")}
+                      >
+                        {product.published ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                        {product.published ? "Published" : "Draft"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFeatured(product.id)}
+                        disabled={isPending}
+                        className={[
+                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-semibold",
+                          product.featured
+                            ? "border-primary/25 bg-primary/10 text-primary"
+                            : "border-border/70 text-muted-foreground",
+                        ].join(" ")}
+                      >
+                        <Star className={`h-3 w-3 ${product.featured ? "fill-current" : ""}`} />
+                        {product.featured ? "Featured" : "Feature"}
+                      </button>
+                      <Badge variant="secondary" className="rounded-full text-[10px]">{product.category}</Badge>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyId(product.id)}
+                        className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                      >
+                        {copiedId === product.id ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        {copiedId === product.id ? "Copied" : product.id.slice(0, 8) + "…"}
+                      </button>
+                      <AdminActions productId={product.id} productSlug={product.slug} />
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card/30 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{pageStart}–{pageEnd}</span> of{" "}
+                <span className="font-semibold text-foreground">{totalCount}</span>
+              </p>
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                <Button asChild variant="outline" size="sm" className="shrink-0 rounded-lg" disabled={currentPage <= 1}>
+                  <Link href={pageHref(currentPage - 1)} aria-disabled={currentPage <= 1} className={currentPage <= 1 ? "pointer-events-none opacity-40" : ""}>
+                    Previous
+                  </Link>
+                </Button>
+                {pageNumbers.map((page, index) => {
+                  const previous = pageNumbers[index - 1];
+                  const showGap = previous && page - previous > 1;
+                  return (
+                    <span key={page} className="contents">
+                      {showGap && <span className="px-1 text-muted-foreground">…</span>}
+                      <Button asChild variant={page === currentPage ? "default" : "outline"} size="sm" className="h-9 w-9 shrink-0 rounded-lg p-0">
+                        <Link href={pageHref(page)} aria-current={page === currentPage ? "page" : undefined}>{page}</Link>
+                      </Button>
+                    </span>
+                  );
+                })}
+                <Button asChild variant="outline" size="sm" className="shrink-0 rounded-lg" disabled={currentPage >= totalPages}>
+                  <Link href={pageHref(currentPage + 1)} aria-disabled={currentPage >= totalPages} className={currentPage >= totalPages ? "pointer-events-none opacity-40" : ""}>
+                    Next
+                  </Link>
                 </Button>
               </div>
             </div>
           )}
-        </Card>
+        </>
       )}
     </div>
   );
