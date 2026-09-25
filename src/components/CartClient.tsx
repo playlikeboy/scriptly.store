@@ -4,14 +4,31 @@ import { useCart } from "@/components/CartContext";
 import { useState, useTransition, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createRazorpayOrderAction, verifyPaymentAction } from "@/lib/actions/orders";
 import { loadRazorpayScript } from "@/lib/payments/razorpay-loader";
 import { validateReferralCodeAction } from "@/lib/actions/affiliates";
-import { Trash, CreditCard, ShoppingBag, Loader2, CheckCircle2, AlertCircle, Percent } from "lucide-react";
+import { formatUSD } from "@/lib/price-utils";
+import {
+  Trash2,
+  CreditCard,
+  ShoppingBag,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Percent,
+  Sparkles,
+  ArrowRight,
+  ShieldCheck,
+  Zap,
+  Lock,
+  Tag,
+  Gift,
+} from "lucide-react";
+import { toast } from "sonner";
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -35,17 +52,20 @@ export default function CartClient() {
       const decodedVal = decodeURIComponent(match[1]);
       setAppliedReferral(decodedVal);
       setReferralInput(decodedVal);
-      setReferralMessage({ success: true, text: `Referral code "${decodedVal}" active! Extra 5% discount applied.` });
+      setReferralMessage({
+        success: true,
+        text: `Referral "${decodedVal}" active — 5% extra discount applied.`,
+      });
     }
   }, []);
 
-  // Compute Automatic Offer: 20% off > $60.00 (6000 cents)
-  const autoOfferDiscount = cartSubtotal >= 6000 ? Math.round(cartSubtotal * 0.20) : 0;
+  // Compute Automatic Bulk Offer: 20% off for carts >= $60.00 (6000 cents)
+  const autoOfferDiscount = cartSubtotal >= 6000 ? Math.round(cartSubtotal * 0.2) : 0;
   const amountAfterAuto = cartSubtotal - autoOfferDiscount;
 
   // Validate coupon using SWR
-  const swrKey = appliedCode 
-    ? `/api/coupons/validate?code=${encodeURIComponent(appliedCode)}&amount=${amountAfterAuto}` 
+  const swrKey = appliedCode
+    ? `/api/coupons/validate?code=${encodeURIComponent(appliedCode)}&amount=${amountAfterAuto}`
     : null;
 
   const { data: couponData, error: swrError, isLoading: couponLoading } = useSWR<any>(
@@ -60,11 +80,11 @@ export default function CartClient() {
 
   if (appliedCode) {
     if (couponLoading) {
-      // Still loading
+      // Validating...
     } else if (swrError || (couponData && !couponData.success)) {
       couponError = couponData?.message || "Invalid coupon code.";
     } else if (couponData && couponData.success) {
-      couponSuccess = `Coupon "${couponData.coupon.code}" applied successfully!`;
+      couponSuccess = `Coupon "${couponData.coupon.code}" applied!`;
       const val = couponData.coupon.discountValue;
       if (couponData.coupon.discountType === "percentage") {
         couponDiscount = Math.round(amountAfterAuto * (val / 100));
@@ -74,12 +94,12 @@ export default function CartClient() {
     }
   }
 
-  // Calculate Referral Discount (5% on remaining)
-  const referralDiscount = appliedReferral 
-    ? Math.round((amountAfterAuto - couponDiscount) * 0.05) 
+  // Calculate Referral Discount (5% on remaining balance)
+  const referralDiscount = appliedReferral
+    ? Math.round((amountAfterAuto - couponDiscount) * 0.05)
     : 0;
 
-  const finalTotal = Math.max(amountAfterAuto - couponDiscount - referralDiscount, 100); // min $1.00 for Razorpay
+  const finalTotal = Math.max(amountAfterAuto - couponDiscount - referralDiscount, 100); // minimum $1.00 for payment processor
   const totalSavings = autoOfferDiscount + couponDiscount + referralDiscount;
 
   const handleApplyCoupon = (e: React.FormEvent) => {
@@ -87,6 +107,7 @@ export default function CartClient() {
     setCheckoutError(null);
     if (couponInput.trim()) {
       setAppliedCode(couponInput.trim().toUpperCase());
+      toast.info(`Validating coupon "${couponInput.trim().toUpperCase()}"...`);
     } else {
       setAppliedCode(null);
     }
@@ -95,6 +116,7 @@ export default function CartClient() {
   const handleRemoveCoupon = () => {
     setAppliedCode(null);
     setCouponInput("");
+    toast.info("Coupon removed.");
   };
 
   const handleApplyReferral = async (e: React.FormEvent) => {
@@ -110,13 +132,24 @@ export default function CartClient() {
       if (res.success && res.referrerSlug) {
         const code = res.referrerSlug;
         setAppliedReferral(code);
-        setReferralMessage({ success: true, text: `Referral code "${code}" applied! 5% discount added.` });
+        setReferralMessage({
+          success: true,
+          text: `Referral code "${code}" applied — 5% savings added!`,
+        });
         document.cookie = `scriptly_referred_by=${encodeURIComponent(code)}; max-age=${30 * 24 * 60 * 60}; path=/; SameSite=Lax`;
+        toast.success(`Referral applied: 5% discount on this order.`);
       } else {
-        setReferralMessage({ success: false, text: res.message || "Invalid referral code." });
+        setReferralMessage({
+          success: false,
+          text: res.message || "Invalid affiliate referral code.",
+        });
+        toast.error("Invalid affiliate referral code.");
       }
     } catch {
-      setReferralMessage({ success: false, text: "Failed to validate referral code." });
+      setReferralMessage({
+        success: false,
+        text: "Failed to validate referral code.",
+      });
     } finally {
       setReferralPending(false);
     }
@@ -127,6 +160,14 @@ export default function CartClient() {
     setReferralInput("");
     setReferralMessage(null);
     document.cookie = "scriptly_referred_by=; max-age=0; path=/;";
+    toast.info("Referral code removed.");
+  };
+
+  const handleClearCart = () => {
+    if (window.confirm("Are you sure you want to empty your shopping cart?")) {
+      clearCart();
+      toast.info("Cart cleared.");
+    }
   };
 
   const handleCheckout = async () => {
@@ -148,7 +189,7 @@ export default function CartClient() {
         // Dynamically load Razorpay SDK
         const scriptLoaded = await loadRazorpayScript();
         if (!scriptLoaded || typeof window.Razorpay === "undefined") {
-          setCheckoutError("Payment SDK failed to load. Please check your network connection.");
+          setCheckoutError("Payment gateway SDK failed to load. Please check your network connection.");
           return;
         }
 
@@ -171,7 +212,7 @@ export default function CartClient() {
                 clearCart();
                 router.push(`/purchase-success?orderId=${verifyResult.orderId}`);
               } else {
-                setCheckoutError("Payment signature verification failed. Please contact support.");
+                setCheckoutError("Payment verification failed. Please contact support.");
               }
             } catch (err: any) {
               console.error("Payment verification err:", err);
@@ -189,7 +230,7 @@ export default function CartClient() {
 
         const rzp = new window.Razorpay(options);
         rzp.on("payment.failed", function (response: any) {
-          setCheckoutError(response.error.description || "Payment was cancelled or failed.");
+          setCheckoutError(response.error.description || "Payment was cancelled or declined.");
         });
         rzp.open();
       } catch (err: any) {
@@ -201,230 +242,469 @@ export default function CartClient() {
 
   if (!mounted) {
     return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <div className="flex flex-col items-center justify-center min-h-[40vh] space-y-4">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-xs text-muted-foreground font-mono">Loading cart items...</p>
       </div>
     );
   }
 
+  // Empty Cart View
   if (cartCount === 0) {
     return (
-      <div className="text-center py-20 space-y-5 max-w-md mx-auto">
-        <div className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center mx-auto text-muted-foreground">
-          <ShoppingBag className="w-6 h-6" />
+      <div className="text-center py-16 sm:py-24 space-y-8 max-w-xl mx-auto rounded-3xl border border-dashed border-border/60 bg-card/25 p-8 sm:p-12 animate-in fade-in duration-300">
+        <div className="relative w-20 h-20 mx-auto">
+          <div className="w-20 h-20 bg-primary/10 text-primary rounded-3xl flex items-center justify-center border border-primary/20 shadow-lg">
+            <ShoppingBag className="w-9 h-9" />
+          </div>
+          <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-black shadow">
+            0
+          </span>
         </div>
-        <h2 className="text-xl font-semibold tracking-tight text-foreground">Your cart is empty</h2>
-        <p className="text-muted-foreground text-xs leading-relaxed">
-          Explore our marketplace collection of developer templates, automation scripts, and digital tools.
-        </p>
-        <Button asChild size="default">
-          <Link href="/explore">Browse Products</Link>
-        </Button>
+
+        <div className="space-y-2">
+          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+            Your cart is empty
+          </h2>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
+            Discover verified SaaS boilerplates, AI prompt engines, browser extensions, and developer scripts ready to deploy.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <Button
+            asChild
+            size="default"
+            className="rounded-2xl font-black text-xs uppercase tracking-wider bg-[#58CC02] hover:bg-[#58CC02]/90 text-white shadow-[0_3px_0_#46A302] active:translate-y-px active:shadow-none transition-all px-6 h-11"
+          >
+            <Link href="/featured">
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+              <span>Explore Featured</span>
+            </Link>
+          </Button>
+
+          <Button
+            asChild
+            variant="outline"
+            size="default"
+            className="rounded-2xl font-bold text-xs border-border/60 hover:bg-muted/40 h-11 px-5"
+          >
+            <Link href="/explore">
+              <span>Browse Catalog</span>
+            </Link>
+          </Button>
+
+          <Button
+            asChild
+            variant="ghost"
+            size="default"
+            className="rounded-2xl font-bold text-xs text-muted-foreground hover:text-foreground h-11 px-4"
+          >
+            <Link href="/free">
+              <Gift className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
+              <span>Free Scripts</span>
+            </Link>
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
-      {/* Cart Items List */}
-      <div className="lg:col-span-7 space-y-4">
-        {cart.map((item) => (
-          <div key={item.id} className="rounded-lg border border-border/80 bg-card p-4 sm:p-5 flex gap-4 items-center justify-between">
-            <div className="flex items-center gap-4 min-w-0">
-              <div className="w-16 h-16 bg-secondary rounded-md overflow-hidden flex-shrink-0 relative border border-border/60">
-                {item.thumbnail ? (
-                  <img src={item.thumbnail} alt={item.title} loading="lazy" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-[9px] font-mono text-muted-foreground">
-                    {item.category}
-                  </div>
-                )}
-              </div>
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
+      {/* Left Column: Cart Items List */}
+      <div className="lg:col-span-7 space-y-6">
+        <div className="flex items-center justify-between border-b border-border/40 pb-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-black tracking-tight text-foreground">
+              Review Items
+            </h2>
+            <Badge variant="secondary" className="rounded-full text-xs font-mono font-bold px-2.5 py-0.5">
+              {cartCount} {cartCount === 1 ? "item" : "items"}
+            </Badge>
+          </div>
 
-              <div className="min-w-0 space-y-1">
-                <span className="text-[10px] font-mono uppercase text-muted-foreground">
-                  {item.category}
-                </span>
-                <h3 className="font-medium text-sm text-foreground truncate">
-                  <Link href={`/products/${item.slug}`} className="hover:underline">
-                    {item.title}
-                  </Link>
-                </h3>
-                <div className="text-xs font-semibold text-foreground font-mono flex items-baseline gap-2">
-                  <span>${(item.price / 100).toFixed(2)}</span>
-                  {item.originalPrice && item.originalPrice > item.price && (
-                    <span className="text-[11px] text-muted-foreground line-through">
-                      ${(item.originalPrice / 100).toFixed(2)}
-                    </span>
+          <button
+            type="button"
+            onClick={handleClearCart}
+            className="text-xs font-semibold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Clear Cart</span>
+          </button>
+        </div>
+
+        {/* Product Cards List */}
+        <div className="space-y-4">
+          {cart.map((item) => (
+            <div
+              key={item.id}
+              className="rounded-2xl border border-border/40 bg-card/40 backdrop-blur-md p-4 sm:p-5 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between hover:border-primary/40 transition-all duration-200 shadow-sm"
+            >
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                {/* Product Thumbnail */}
+                <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-xl overflow-hidden bg-muted border border-border/40 shrink-0 relative">
+                  {item.thumbnail ? (
+                    <Image
+                      src={item.thumbnail}
+                      alt={item.title}
+                      fill
+                      sizes="80px"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] font-mono text-muted-foreground uppercase">
+                      {item.category}
+                    </div>
                   )}
                 </div>
+
+                {/* Details */}
+                <div className="min-w-0 space-y-1 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-black uppercase tracking-wider">
+                      {item.category.replace(/-/g, " ")}
+                    </span>
+                  </div>
+
+                  <h3 className="font-bold text-sm sm:text-base text-foreground truncate">
+                    <Link
+                      href={`/products/${item.slug}`}
+                      className="hover:text-primary transition-colors"
+                    >
+                      {item.title}
+                    </Link>
+                  </h3>
+
+                  <div className="flex items-center gap-3 pt-0.5">
+                    <div className="flex items-baseline gap-1.5 font-mono">
+                      <span className="text-base font-black text-foreground">
+                        {formatUSD(item.price)}
+                      </span>
+                      {item.originalPrice && item.originalPrice > item.price && (
+                        <span className="text-xs text-muted-foreground line-through">
+                          {formatUSD(item.originalPrice)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-medium text-emerald-500 flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      Commercial License
+                    </span>
+                  </div>
+                </div>
               </div>
+
+              {/* Remove Action */}
+              <button
+                type="button"
+                onClick={() => {
+                  removeFromCart(item.id);
+                  toast.info(`Removed "${item.title}" from cart.`);
+                }}
+                className="self-end sm:self-center p-2.5 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer shrink-0"
+                title="Remove item"
+                aria-label={`Remove ${item.title}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
+          ))}
+        </div>
 
-            <Button
-              onClick={() => removeFromCart(item.id)}
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
-              aria-label="Remove item"
-            >
-              <Trash className="w-4 h-4" />
-            </Button>
-          </div>
-        ))}
-
-        <div className="flex items-center justify-between pt-2">
-          <Button asChild variant="link" className="text-muted-foreground hover:text-foreground text-xs p-0">
+        {/* Back Link */}
+        <div className="pt-2 flex items-center justify-between">
+          <Button
+            asChild
+            variant="link"
+            className="text-muted-foreground hover:text-foreground text-xs p-0 font-medium"
+          >
             <Link href="/explore">
-              ← Continue browsing
+              ← Continue browsing marketplace
             </Link>
           </Button>
-          <Button
-            onClick={clearCart}
-            variant="ghost"
-            size="sm"
-            className="text-xs text-muted-foreground hover:text-destructive"
+
+          <Link
+            href="/contact"
+            className="text-[11px] text-muted-foreground hover:underline"
           >
-            Clear Cart
-          </Button>
+            Need help or bulk enterprise licensing?
+          </Link>
         </div>
       </div>
 
-      {/* Pricing Summary Sidebar */}
+      {/* Right Column: Sticky Order Summary */}
       <div className="lg:col-span-5">
-        <div className="bg-card border border-border/80 rounded-lg p-6 space-y-5 sticky top-20">
-          <h3 className="text-sm font-semibold text-foreground border-b border-border/60 pb-3">
-            Order Summary
-          </h3>
+        <div className="rounded-3xl border border-border/50 bg-card/60 backdrop-blur-xl p-6 sm:p-7 space-y-6 shadow-xl sticky top-20 relative overflow-hidden">
+          {/* Accent top gradient line */}
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary via-emerald-500 to-sky-500 opacity-90" />
 
-          <div className="space-y-3 text-xs">
-            <div className="flex justify-between items-center text-muted-foreground">
-              <span>Subtotal</span>
-              <span className="text-foreground font-mono font-medium">${(cartSubtotal / 100).toFixed(2)}</span>
-            </div>
-
-            {autoOfferDiscount > 0 && (
-              <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400">
-                <span>Bulk Savings (20% Off)</span>
-                <span className="font-mono">- ${(autoOfferDiscount / 100).toFixed(2)}</span>
-              </div>
-            )}
-
-            {couponDiscount > 0 && (
-              <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400">
-                <span>Coupon Applied</span>
-                <span className="font-mono">- ${(couponDiscount / 100).toFixed(2)}</span>
-              </div>
-            )}
-
-            {referralDiscount > 0 && (
-              <div className="flex justify-between items-center text-emerald-600 dark:text-emerald-400">
-                <span>Referral Discount (5%)</span>
-                <span className="font-mono">- ${(referralDiscount / 100).toFixed(2)}</span>
-              </div>
-            )}
-
-            <div className="border-t border-border/60 pt-3 flex justify-between items-baseline">
-              <span className="text-sm font-semibold text-foreground">Total</span>
-              <div className="text-right">
-                <span className="text-2xl font-semibold text-foreground font-mono">
-                  ${(finalTotal / 100).toFixed(2)}
-                </span>
-                <span className="text-[10px] text-muted-foreground block font-mono">USD</span>
-              </div>
-            </div>
-
-            {totalSavings > 0 && (
-              <div className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-md text-center">
-                Total savings: ${(totalSavings / 100).toFixed(2)}
-              </div>
-            )}
+          <div className="flex items-center justify-between border-b border-border/40 pb-4">
+            <h3 className="text-base font-black tracking-tight text-foreground">
+              Order Summary
+            </h3>
+            <span className="text-xs font-mono text-muted-foreground font-semibold">
+              {cartCount} {cartCount === 1 ? "Item" : "Items"}
+            </span>
           </div>
 
-          {/* Coupon Code Form */}
-          <form onSubmit={handleApplyCoupon} className="space-y-2 pt-2 border-t border-border/50 text-xs">
-            <label className="font-medium text-foreground block">Coupon Code</label>
+          {/* Pricing Ledger */}
+          <div className="space-y-3 text-xs sm:text-sm">
+            <div className="flex justify-between items-center text-muted-foreground font-medium">
+              <span>Items Subtotal</span>
+              <span className="text-foreground font-mono font-bold">
+                {formatUSD(cartSubtotal)}
+              </span>
+            </div>
+
+            {/* Auto Bulk 20% discount */}
+            {autoOfferDiscount > 0 && (
+              <div className="flex justify-between items-center text-emerald-500 font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Bulk Order Savings (20% Off)</span>
+                </span>
+                <span className="font-mono font-bold">
+                  -{formatUSD(autoOfferDiscount)}
+                </span>
+              </div>
+            )}
+
+            {/* Coupon discount */}
+            {couponDiscount > 0 && (
+              <div className="flex justify-between items-center text-emerald-500 font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5" />
+                  <span>Coupon ({appliedCode})</span>
+                </span>
+                <span className="font-mono font-bold">
+                  -{formatUSD(couponDiscount)}
+                </span>
+              </div>
+            )}
+
+            {/* Referral discount */}
+            {referralDiscount > 0 && (
+              <div className="flex justify-between items-center text-emerald-500 font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Percent className="w-3.5 h-3.5" />
+                  <span>Referral Savings (5%)</span>
+                </span>
+                <span className="font-mono font-bold">
+                  -{formatUSD(referralDiscount)}
+                </span>
+              </div>
+            )}
+
+            {/* Total Savings Highlight Pill */}
+            {totalSavings > 0 && (
+              <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold flex items-center justify-between">
+                <span>Total Savings Applied:</span>
+                <span className="font-mono font-black">{formatUSD(totalSavings)} 🎉</span>
+              </div>
+            )}
+
+            {/* Final Total Row */}
+            <div className="border-t border-border/40 pt-4 flex justify-between items-baseline">
+              <span className="text-base font-black text-foreground">
+                Total Due
+              </span>
+              <div className="text-right">
+                <span className="text-3xl font-black text-foreground font-mono">
+                  {formatUSD(finalTotal)}
+                </span>
+                <span className="text-[10px] text-muted-foreground block font-mono font-semibold uppercase mt-0.5">
+                  USD · One-Time
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
+              🔒 Billed securely via Razorpay at live bank exchange rate with instantaneous code delivery.
+            </p>
+          </div>
+
+          {/* Coupon Code Accordion / Input Form */}
+          <form
+            onSubmit={handleApplyCoupon}
+            className="space-y-2 pt-4 border-t border-border/40 text-xs"
+          >
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-foreground flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-primary" />
+                <span>Have a Coupon Code?</span>
+              </label>
+              {appliedCode && (
+                <span className="text-[10px] font-mono text-emerald-500 font-bold uppercase">
+                  Applied
+                </span>
+              )}
+            </div>
+
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="PROMO CODE"
+                placeholder="e.g. SCRIPTLY20"
                 value={couponInput}
                 onChange={(e) => setCouponInput(e.target.value)}
                 disabled={!!appliedCode}
-                className="flex-1 px-3 py-1.5 rounded-md border border-border bg-background text-xs uppercase font-mono disabled:opacity-50"
+                className="flex-1 px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-xs uppercase font-mono tracking-wider focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
               />
               {appliedCode ? (
-                <Button type="button" onClick={handleRemoveCoupon} variant="outline" size="sm">
+                <Button
+                  type="button"
+                  onClick={handleRemoveCoupon}
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl text-xs font-bold h-10 border-border/60 hover:text-destructive"
+                >
                   Remove
                 </Button>
               ) : (
-                <Button type="submit" variant="secondary" size="sm">
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="rounded-xl text-xs font-bold h-10 px-4 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 shadow-[0_2px_0_rgba(0,0,0,0.1)] active:translate-y-px active:shadow-none"
+                >
                   Apply
                 </Button>
               )}
             </div>
 
             {couponError && (
-              <p className="text-[11px] text-destructive">{couponError}</p>
+              <p className="text-[11px] text-destructive flex items-center gap-1 font-medium pt-0.5">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>{couponError}</span>
+              </p>
             )}
             {couponSuccess && (
-              <p className="text-[11px] text-emerald-600 dark:text-emerald-400">{couponSuccess}</p>
+              <p className="text-[11px] text-emerald-500 flex items-center gap-1 font-bold pt-0.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{couponSuccess}</span>
+              </p>
             )}
           </form>
 
-          {/* Referral Code Form */}
-          <form onSubmit={handleApplyReferral} className="space-y-2 pt-2 border-t border-border/50 text-xs">
-            <label className="font-medium text-foreground flex items-center gap-1">
-              <Percent className="h-3 w-3 text-primary" />
-              <span>Referral Code (5% Off)</span>
-            </label>
+          {/* Referral Code Accordion / Input Form */}
+          <form
+            onSubmit={handleApplyReferral}
+            className="space-y-2 pt-3 border-t border-border/40 text-xs"
+          >
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-foreground flex items-center gap-1.5">
+                <Percent className="w-3.5 h-3.5 text-primary" />
+                <span>Affiliate Referral Code (5% Off)</span>
+              </label>
+              {appliedReferral && (
+                <span className="text-[10px] font-mono text-emerald-500 font-bold uppercase">
+                  Active
+                </span>
+              )}
+            </div>
+
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="AFFILIATE CODE"
+                placeholder="AFFILIATE USERNAME"
                 value={referralInput}
                 onChange={(e) => setReferralInput(e.target.value)}
                 disabled={!!appliedReferral || referralPending}
-                className="flex-1 px-3 py-1.5 rounded-md border border-border bg-background text-xs uppercase font-mono disabled:opacity-50"
+                className="flex-1 px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-xs uppercase font-mono tracking-wider focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
               />
               {appliedReferral ? (
-                <Button type="button" onClick={handleRemoveReferral} variant="outline" size="sm">
+                <Button
+                  type="button"
+                  onClick={handleRemoveReferral}
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl text-xs font-bold h-10 border-border/60 hover:text-destructive"
+                >
                   Remove
                 </Button>
               ) : (
-                <Button type="submit" variant="secondary" size="sm" disabled={referralPending}>
-                  {referralPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Apply"}
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={referralPending}
+                  className="rounded-xl text-xs font-bold h-10 px-4 bg-secondary text-foreground hover:bg-secondary/80 border border-border/60 shadow-[0_2px_0_rgba(0,0,0,0.1)] active:translate-y-px active:shadow-none"
+                >
+                  {referralPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    "Apply"
+                  )}
                 </Button>
               )}
             </div>
 
             {referralMessage && (
-              <p className={`text-[11px] ${referralMessage.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
-                {referralMessage.text}
+              <p
+                className={`text-[11px] font-medium flex items-center gap-1 pt-0.5 ${
+                  referralMessage.success ? "text-emerald-500" : "text-destructive"
+                }`}
+              >
+                {referralMessage.success ? (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5" />
+                )}
+                <span>{referralMessage.text}</span>
               </p>
             )}
           </form>
 
-          {/* Checkout CTA */}
-          <div className="pt-2">
+          {/* Primary Checkout CTA Button */}
+          <div className="pt-2 space-y-4">
             <Button
               onClick={handleCheckout}
               disabled={isPending}
-              className="w-full h-11 text-xs font-semibold"
+              className="w-full h-13 text-xs sm:text-sm font-black uppercase tracking-wider bg-[#58CC02] hover:bg-[#58CC02]/90 text-white rounded-2xl shadow-[0_4px_0_#46A302] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               {isPending ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Preparing Secure Checkout...</span>
+                </>
               ) : (
-                <CreditCard className="w-4 h-4 mr-2" />
+                <>
+                  <Lock className="w-4 h-4" />
+                  <span>Checkout {formatUSD(finalTotal)} — Instant Access</span>
+                </>
               )}
-              <span>Pay ${(finalTotal / 100).toFixed(2)} USD</span>
             </Button>
 
             {checkoutError && (
-              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 px-3 py-2 rounded-md text-center mt-3">
-                {checkoutError}
-              </p>
+              <div className="p-3 rounded-2xl text-xs text-destructive bg-destructive/10 border border-destructive/20 text-center flex items-center justify-center gap-1.5 font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{checkoutError}</span>
+              </div>
             )}
+
+            {/* Payment Method Badges & Guarantees */}
+            <div className="pt-2 text-center space-y-3">
+              <div className="flex flex-wrap items-center justify-center gap-2 text-[10px] font-bold text-muted-foreground font-mono">
+                <span className="px-2 py-0.5 rounded-md border border-border/40 bg-muted/20">UPI</span>
+                <span className="px-2 py-0.5 rounded-md border border-border/40 bg-muted/20">Google Pay</span>
+                <span className="px-2 py-0.5 rounded-md border border-border/40 bg-muted/20">PhonePe</span>
+                <span className="px-2 py-0.5 rounded-md border border-border/40 bg-muted/20">Cards (Visa/MC)</span>
+                <span className="px-2 py-0.5 rounded-md border border-border/40 bg-muted/20">NetBanking</span>
+              </div>
+
+              <div className="space-y-1 text-[11px] text-muted-foreground text-left pt-2 border-t border-border/30">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>Instant ZIP archive download & license key receipt</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>Direct developer support & free upcoming version updates</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>Full commercial rights for unlimited client projects</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

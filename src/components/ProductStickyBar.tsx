@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { formatPaiseToINR } from "@/lib/price-utils";
+import { formatUSD } from "@/lib/price-utils";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Zap, ExternalLink, ArrowUp } from "lucide-react";
 
@@ -64,7 +64,7 @@ export default function ProductStickyBar({
             </p>
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <span className="font-mono font-bold text-foreground">
-                {isFree ? "FREE" : formatPaiseToINR(pricePaise)}
+                {isFree ? "FREE" : formatUSD(pricePaise)}
               </span>
               <span>·</span>
               <span className="flex items-center gap-1 text-emerald-500">
@@ -97,7 +97,7 @@ export default function ProductStickyBar({
             className="rounded-xl text-xs font-black uppercase tracking-wider bg-[#58CC02] hover:bg-[#58CC02]/90 text-white shadow-[0_2px_0_#46A302] active:translate-y-px active:shadow-none transition-all px-5"
           >
             <Zap className="w-3.5 h-3.5 mr-1.5" />
-            <span>{isFree ? "Download Free" : `Buy Now — ${formatPaiseToINR(pricePaise)}`}</span>
+            <span>{isFree ? "Download Free" : `Buy Now — ${formatUSD(pricePaise)}`}</span>
           </Button>
         </div>
       </div>

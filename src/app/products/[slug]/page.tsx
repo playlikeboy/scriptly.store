@@ -8,7 +8,7 @@ import { getOrCreateDbUser } from "@/lib/auth-utils";
 import ProductCheckout from "@/components/ProductCheckout";
 import Link from "next/link";
 import ProductAffiliateShare from "@/components/ProductAffiliateShare";
-import { getProductEffectivePrice, formatPaiseToINR } from "@/lib/price-utils";
+import { getProductEffectivePrice, formatUSD } from "@/lib/price-utils";
 import {
   ArrowLeft,
   ExternalLink,
@@ -73,7 +73,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   const promo = getProductEffectivePrice(product);
-  const priceText = promo.isFree ? "FREE" : formatPaiseToINR(promo.effectivePrice);
+  const priceText = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceText);
 
   const ogImages: { url: string; width?: number; height?: number; alt?: string }[] = [];
@@ -209,7 +209,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
   };
   const htmlDescription = await marked.parse(product.description || "", { renderer: customRenderer });
 
-  const priceFormatted = promo.isFree ? "FREE" : formatPaiseToINR(promo.effectivePrice);
+  const priceFormatted = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceFormatted);
 
   // Rich Schema.org JSON-LD structured data
@@ -563,10 +563,10 @@ export default async function ProductDetailPage({ params }: PageProps) {
                     <div className="space-y-1">
                       <div className="flex items-baseline gap-2.5">
                         <span className="text-4xl font-black text-foreground font-mono">
-                          {formatPaiseToINR(promo.effectivePrice)}
+                          {formatUSD(promo.effectivePrice)}
                         </span>
                         <span className="text-base text-muted-foreground line-through font-mono">
-                          {formatPaiseToINR(promo.price)}
+                          {formatUSD(promo.price)}
                         </span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-500/10 text-rose-500 border border-rose-500/20">
                           {promo.discountPercent}% OFF
@@ -580,10 +580,10 @@ export default async function ProductDetailPage({ params }: PageProps) {
                     <div className="space-y-0.5">
                       <div className="flex items-baseline gap-2">
                         <span className="text-4xl font-black text-foreground font-mono">
-                          {formatPaiseToINR(product.price)}
+                          {formatUSD(product.price)}
                         </span>
                         <span className="text-xs text-muted-foreground font-mono uppercase font-bold tracking-wider">
-                          INR
+                          USD
                         </span>
                       </div>
                       <p className="text-[11px] text-muted-foreground font-mono">

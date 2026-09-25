@@ -10,6 +10,11 @@ import { Button } from "@/components/ui/button";
 import AdminSearchSort from "@/app/admin/products/AdminSearchSort";
 import AdminProductsTable from "@/app/admin/products/AdminProductsTable";
 
+export const metadata: Metadata = {
+  title: "Products Inventory | Admin Console",
+  description: "Manage product inventory, pricing, approvals, and status.",
+};
+
 interface PageProps {
   searchParams: Promise<{
     page?: string;

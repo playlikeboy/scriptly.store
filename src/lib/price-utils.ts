@@ -91,3 +91,11 @@ export const formatINR = (amountInRupees: number) =>
 
 export const formatPaiseToINR = (amountInPaise: number) =>
   formatINR(Math.round(amountInPaise / 100));
+
+export const formatUSD = (amountInCents: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(amountInCents / 100);
+

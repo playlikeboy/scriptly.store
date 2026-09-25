@@ -7,7 +7,7 @@ import { CreditCard, Download, Loader2, ShoppingCart, Trash, ChevronDown } from 
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/components/CartContext";
-import { getProductEffectivePrice, formatPaiseToINR } from "@/lib/price-utils";
+import { getProductEffectivePrice, formatUSD } from "@/lib/price-utils";
 
 interface ProductCheckoutProps {
   product: {
@@ -157,8 +157,8 @@ export default function ProductCheckout({
     });
   };
 
-  const formatPrice = (amountPaise: number) => {
-    return formatPaiseToINR(amountPaise);
+  const formatPrice = (amountCents: number) => {
+    return formatUSD(amountCents);
   };
 
   const handleCartToggle = (e: React.MouseEvent) => {
