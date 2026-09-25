@@ -40,8 +40,8 @@ export default async function DirectoriesPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const searchQuery = resolvedParams.search || "";
 
-  // Fetch awesome saas directories list from SSR
-  const res = await fetch("https://raw.githubusercontent.com/theshubh77/awesome-saas-directories/master/launchdb.json", {
+  // Fetch awesome saas directories list from SSR via jsDelivr CDN
+  const res = await fetch("https://cdn.jsdelivr.net/gh/theshubh77/awesome-saas-directories@master/launchdb.json", {
     next: { revalidate: 86400 } // Cache for 24 hours
   });
   const directories: Directory[] = await res.json();

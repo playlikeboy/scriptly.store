@@ -35,7 +35,7 @@ function slugify(name: string): string {
 
 async function getDirectoryBySlug(slug: string): Promise<Directory | null> {
   try {
-    const res = await fetch("https://raw.githubusercontent.com/theshubh77/awesome-saas-directories/master/launchdb.json", {
+    const res = await fetch("https://cdn.jsdelivr.net/gh/theshubh77/awesome-saas-directories@master/launchdb.json", {
       next: { revalidate: 86400 }
     });
     const directories: Directory[] = await res.json();
