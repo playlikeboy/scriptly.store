@@ -81,3 +81,13 @@ export function getProductEffectivePrice(product: {
     isPromoActive: false,
   };
 }
+
+export const formatINR = (amountInRupees: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amountInRupees);
+
+export const formatPaiseToINR = (amountInPaise: number) =>
+  formatINR(Math.round(amountInPaise / 100));

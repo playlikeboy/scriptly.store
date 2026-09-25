@@ -8,7 +8,7 @@ import { getOrCreateDbUser } from "@/lib/auth-utils";
 import ProductCheckout from "@/components/ProductCheckout";
 import Link from "next/link";
 import ProductAffiliateShare from "@/components/ProductAffiliateShare";
-import { getProductEffectivePrice } from "@/lib/price-utils";
+import { getProductEffectivePrice, formatPaiseToINR } from "@/lib/price-utils";
 import {
   ArrowLeft,
   ExternalLink,
@@ -27,6 +27,9 @@ import {
   Code2,
   Heart,
   Home,
+  Check,
+  FileText,
+  Lock,
 } from "lucide-react";
 import { Metadata } from "next";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +41,8 @@ import ProductScreenshots from "@/components/ProductScreenshots";
 import ProductMediaSwitcher from "@/components/ProductMediaSwitcher";
 import ProductRating from "@/components/ProductRating";
 import ProductInteractionAndReviews from "@/components/ProductInteractionAndReviews";
+import ProductStickyBar from "@/components/ProductStickyBar";
+import ProductCard from "@/components/marketplace/ProductCard";
 import { getProductSeo } from "@/lib/seo-data";
 import { siteConfig } from "@/config/site";
 import { CyberBackground } from "@/components/ui/CyberBackground";
@@ -47,12 +52,6 @@ interface PageProps {
     slug: string;
   }>;
 }
-
-// Universal USD pricing formatter
-const formatUSD = (amountPaise: number) => {
-  const dollars = amountPaise / 100;
-  return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
-};
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
@@ -74,7 +73,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   const promo = getProductEffectivePrice(product);
-  const priceText = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
+  const priceText = promo.isFree ? "FREE" : formatPaiseToINR(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceText);
 
   const ogImages: { url: string; width?: number; height?: number; alt?: string }[] = [];
@@ -90,8 +89,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     ogImages.push({ url: product.previewGif, alt: `${product.title} Animated Demo` });
   }
 
-  const keywords = product.tags 
-    ? product.tags.split(",").map((t) => t.trim()) 
+  const keywords = product.tags
+    ? product.tags.split(",").map((t) => t.trim())
     : [product.category, "developer tool", "source code", "boilerplate", "Next.js template", "React component"];
 
   return {
@@ -192,84 +191,91 @@ export default async function ProductDetailPage({ params }: PageProps) {
     if (purchase) hasPurchased = true;
   }
 
-  const tagsList = product.tags ? product.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
-  const screenshotsList = Array.from(new Set(product.screenshots ? product.screenshots.split(",").map((s) => s.trim()).filter(Boolean) : [])).filter((src) => src !== product.thumbnail);
+  const tagsList = product.tags
+    ? product.tags.split(",").map((t) => t.trim()).filter(Boolean)
+    : [];
+
+  const screenshotsList = Array.from(
+    new Set(
+      product.screenshots
+        ? product.screenshots.split(",").map((s) => s.trim()).filter(Boolean)
+        : []
+    )
+  ).filter((src) => src !== product.thumbnail);
 
   const customRenderer = new marked.Renderer();
-  customRenderer.link = function(token) {
+  customRenderer.link = function (token) {
     return `<a href="${token.href}" title="${token.title || ""}" target="_blank" rel="noopener noreferrer" class="text-primary underline font-medium hover:opacity-80 transition-opacity">${token.text}</a>`;
   };
   const htmlDescription = await marked.parse(product.description || "", { renderer: customRenderer });
 
-  const priceFormatted = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
+  const priceFormatted = promo.isFree ? "FREE" : formatPaiseToINR(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceFormatted);
-
-  const hasRealRatings = (product.ratingCount ?? 0) > 0;
 
   // Rich Schema.org JSON-LD structured data
   const productSchema: Record<string, any> = {
     "@context": "https://schema.org",
     "@type": "Product",
-    "name": product.title,
-    "image": product.thumbnail ? [product.thumbnail, ...screenshotsList] : [],
-    "description": product.shortDescription,
-    "sku": product.id,
-    "mpn": product.slug,
-    "brand": {
+    name: product.title,
+    image: product.thumbnail ? [product.thumbnail, ...screenshotsList] : [],
+    description: product.shortDescription,
+    sku: product.id,
+    mpn: product.slug,
+    brand: {
       "@type": "Brand",
-      "name": "ScriptlyStore",
+      name: "ScriptlyStore",
     },
-    "category": product.category,
-    "offers": {
+    category: product.category,
+    offers: {
       "@type": "Offer",
-      "url": `${siteConfig.url}/products/${product.slug}`,
-      "priceCurrency": "USD",
-      "price": (promo.effectivePrice / 100).toString(),
-      "priceValidUntil": "2030-12-31",
-      "itemCondition": "https://schema.org/NewCondition",
-      "availability": "https://schema.org/InStock",
-      "seller": {
+      url: `${siteConfig.url}/products/${product.slug}`,
+      priceCurrency: "INR",
+      price: (promo.effectivePrice / 100).toString(),
+      priceValidUntil: "2030-12-31",
+      itemCondition: "https://schema.org/NewCondition",
+      availability: "https://schema.org/InStock",
+      seller: {
         "@type": "Organization",
-        "name": storeName || "ScriptlyStore",
-        "url": siteConfig.url,
+        name: storeName || "ScriptlyStore",
+        url: siteConfig.url,
       },
     },
-    "aggregateRating": {
+    aggregateRating: {
       "@type": "AggregateRating",
-      "ratingValue": product.rating || "5.0",
-      "reviewCount": Math.max(product.ratingCount || 1, 1),
-      "bestRating": "5",
-      "worstRating": "1",
+      ratingValue: product.rating || "5.0",
+      reviewCount: Math.max(product.ratingCount || 1, 1),
+      bestRating: "5",
+      worstRating: "1",
     },
   };
 
   const breadcrumbsSchema = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
-    "itemListElement": [
+    itemListElement: [
       {
         "@type": "ListItem",
-        "position": 1,
-        "name": "Home",
-        "item": siteConfig.url,
+        position: 1,
+        name: "Home",
+        item: siteConfig.url,
       },
       {
         "@type": "ListItem",
-        "position": 2,
-        "name": "Explore",
-        "item": `${siteConfig.url}/explore`,
+        position: 2,
+        name: "Explore",
+        item: `${siteConfig.url}/explore`,
       },
       {
         "@type": "ListItem",
-        "position": 3,
-        "name": product.category.replace(/-/g, " "),
-        "item": `${siteConfig.url}/explore/${encodeURIComponent(product.category.toLowerCase())}`,
+        position: 3,
+        name: product.category.replace(/-/g, " "),
+        item: `${siteConfig.url}/explore/${encodeURIComponent(product.category.toLowerCase())}`,
       },
       {
         "@type": "ListItem",
-        "position": 4,
-        "name": product.title,
-        "item": `${siteConfig.url}/products/${product.slug}`,
+        position: 4,
+        name: product.title,
+        item: `${siteConfig.url}/products/${product.slug}`,
       },
     ],
   };
@@ -277,25 +283,25 @@ export default async function ProductDetailPage({ params }: PageProps) {
   const softwareSchema = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "name": product.title,
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Web, macOS, Linux, Windows",
-    "offers": {
+    name: product.title,
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Web, macOS, Linux, Windows",
+    offers: {
       "@type": "Offer",
-      "price": (promo.effectivePrice / 100).toString(),
-      "priceCurrency": "USD",
+      price: (promo.effectivePrice / 100).toString(),
+      priceCurrency: "INR",
     },
   };
 
   const faqSchema = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
-    "mainEntity": seo.faqs.map((faq) => ({
+    mainEntity: seo.faqs.map((faq) => ({
       "@type": "Question",
-      "name": faq.question,
-      "acceptedAnswer": {
+      name: faq.question,
+      acceptedAnswer: {
         "@type": "Answer",
-        "text": faq.answer,
+        text: faq.answer,
       },
     })),
   };
@@ -304,25 +310,22 @@ export default async function ProductDetailPage({ params }: PageProps) {
     <div className="flex flex-col min-h-screen py-6 sm:py-10 bg-background text-foreground relative">
       <CyberBackground />
 
-      {/* JSON-LD Structured Data */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(productSchema) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbsSchema) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      {/* Structured SEO Schemas */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(productSchema) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbsSchema) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
+
+      {/* Sticky Bottom Floating Bar */}
+      <ProductStickyBar
+        title={product.title}
+        thumbnail={product.thumbnail}
+        pricePaise={promo.effectivePrice}
+        isFree={promo.isFree}
+        demoUrl={product.demoUrl}
       />
 
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 space-y-6 relative z-10">
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 space-y-8 relative z-10">
         {/* Top Header & Breadcrumbs Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <nav aria-label="Breadcrumbs" className="flex items-center gap-1.5 text-muted-foreground flex-wrap">
@@ -355,7 +358,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
         </div>
 
         {/* Product Page Header Banner */}
-        <div className="space-y-3 pt-2">
+        <div className="space-y-3 pt-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/explore/${encodeURIComponent(product.category.toLowerCase())}`}
@@ -368,11 +371,11 @@ export default async function ProductDetailPage({ params }: PageProps) {
             </span>
             <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[11px] font-semibold flex items-center gap-1">
               <Zap className="w-3 h-3" />
-              Instant Delivery
+              Instant ZIP Download
             </span>
             <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[11px] font-semibold flex items-center gap-1">
               <ShieldCheck className="w-3 h-3" />
-              Verified Source Code
+              Commercial License Included
             </span>
           </div>
 
@@ -386,7 +389,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
         </div>
 
         {/* 2-Column Responsive Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start pt-2">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start">
           {/* Main Visual & Documentation Column (7 cols) */}
           <div className="lg:col-span-7 space-y-8">
             {/* Visual Media Showcase */}
@@ -412,19 +415,62 @@ export default async function ProductDetailPage({ params }: PageProps) {
               </div>
             )}
 
+            {/* Value Highlights Grid: What You Receive */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold">
+                  <FileCode2 className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-xs sm:text-sm text-foreground">Full Source Code</h4>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Clean, unminified Next.js &amp; TypeScript repository with modular architecture and zero obfuscation.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
+                <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-xs sm:text-sm text-foreground">Commercial License</h4>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Use for unlimited personal &amp; client commercial projects without recurring royalty fees.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-xs sm:text-sm text-foreground">Instant Digital Delivery</h4>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Download link generated immediately upon checkout and stored in your customer dashboard forever.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-bold">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <h4 className="font-bold text-xs sm:text-sm text-foreground">Lifetime Access &amp; Updates</h4>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Get free access to future version updates and bug fixes directly from your account library.
+                </p>
+              </div>
+            </div>
+
             {/* Product Overview & Markdown Documentation */}
             <div className="p-6 sm:p-8 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md space-y-6 shadow-sm">
               <div className="flex items-center justify-between pb-4 border-b border-border/30">
                 <h2 className="text-base sm:text-lg font-black text-foreground tracking-tight flex items-center gap-2">
-                  <FileCode2 className="w-5 h-5 text-primary" />
+                  <FileText className="w-5 h-5 text-primary" />
                   <span>Overview &amp; Technical Specifications</span>
                 </h2>
                 <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider rounded-lg border-border/60">
-                  Commercial License
+                  Documentation
                 </Badge>
               </div>
 
-              <div 
+              <div
                 dangerouslySetInnerHTML={{ __html: htmlDescription }}
                 className="markdown-content text-sm sm:text-base leading-relaxed text-muted-foreground space-y-4 prose prose-neutral dark:prose-invert max-w-none prose-headings:text-foreground prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary prose-a:underline prose-code:text-primary prose-code:bg-muted/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-strong:text-foreground"
               />
@@ -472,29 +518,15 @@ export default async function ProductDetailPage({ params }: PageProps) {
                 </div>
               </div>
             )}
-
-            {/* Customer Reviews & Social Proof */}
-            <div className="p-6 sm:p-8 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md shadow-sm">
-              <ProductInteractionAndReviews 
-                productId={product.id}
-                initialViews={product.views || 0}
-                initialDownloads={product.downloadsCount || 0}
-                initialSaves={product.saves || 0}
-                initialRating={product.rating || "5.0"}
-                initialRatingCount={product.ratingCount || 0}
-                userLoggedIn={!!user}
-                showStats={product.showStats}
-              />
-            </div>
           </div>
 
           {/* Sticky Checkout & Creator Sidebar (5 cols) */}
-          <div className="lg:col-span-5">
+          <div className="lg:col-span-5" id="checkout-panel">
             <div className="sticky top-20 space-y-6">
               {/* Product Pricing & Buy Panel */}
               <div className="rounded-3xl border border-border/50 bg-card/60 dark:bg-card/30 backdrop-blur-xl p-6 sm:p-7 space-y-5 shadow-xl relative overflow-hidden">
-                {/* Subtle top accent bar */}
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-emerald-500 to-sky-500 opacity-80" />
+                {/* Accent top gradient */}
+                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary via-emerald-500 to-sky-500 opacity-90" />
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -516,7 +548,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   </div>
                 </div>
 
-                {/* Price Display in USD */}
+                {/* Price Display in INR (Rule 2) */}
                 <div className="pt-1">
                   {promo.isFree ? (
                     <div className="flex items-baseline gap-2">
@@ -531,27 +563,27 @@ export default async function ProductDetailPage({ params }: PageProps) {
                     <div className="space-y-1">
                       <div className="flex items-baseline gap-2.5">
                         <span className="text-4xl font-black text-foreground font-mono">
-                          {formatUSD(promo.effectivePrice)}
+                          {formatPaiseToINR(promo.effectivePrice)}
                         </span>
                         <span className="text-base text-muted-foreground line-through font-mono">
-                          {formatUSD(promo.price)}
+                          {formatPaiseToINR(promo.price)}
                         </span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-500/10 text-rose-500 border border-rose-500/20">
                           {promo.discountPercent}% OFF
                         </span>
                       </div>
                       <p className="text-[11px] text-muted-foreground font-mono">
-                        USD · One-time payment · Lifetime access
+                        One-time purchase · Lifetime access · No subscription
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-0.5">
                       <div className="flex items-baseline gap-2">
                         <span className="text-4xl font-black text-foreground font-mono">
-                          {formatUSD(product.price)}
+                          {formatPaiseToINR(product.price)}
                         </span>
                         <span className="text-xs text-muted-foreground font-mono uppercase font-bold tracking-wider">
-                          USD
+                          INR
                         </span>
                       </div>
                       <p className="text-[11px] text-muted-foreground font-mono">
@@ -629,66 +661,96 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   commissionPercent={product.affiliateCommissionPercent ?? 30}
                 />
 
-                {/* Purchase Guarantee Stack */}
+                {/* Buyer Protection & Guarantee Stack */}
                 <div className="pt-4 border-t border-border/40 space-y-2.5 text-xs">
                   <p className="font-bold text-foreground flex items-center gap-1.5">
                     <ShieldCheck className="h-4 w-4 text-emerald-500" />
-                    <span>Purchase Guarantee &amp; Rights</span>
+                    <span>Buyer Protection &amp; Guarantees</span>
                   </p>
 
-                  <ul className="space-y-2 text-muted-foreground text-[11px]">
+                  <ul className="space-y-2.5 text-muted-foreground text-[11px]">
                     <li className="flex items-start gap-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span><strong className="text-foreground font-semibold">Instant Source Archive</strong> — Full source repository ZIP delivered upon checkout.</span>
+                      <span>
+                        <strong className="text-foreground font-semibold">Instant Source Archive:</strong> Full source
+                        repository ZIP delivered upon checkout.
+                      </span>
                     </li>
                     <li className="flex items-start gap-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span><strong className="text-foreground font-semibold">Commercial License</strong> — Full commercial rights for unlimited personal and client projects.</span>
+                      <span>
+                        <strong className="text-foreground font-semibold">Commercial Rights:</strong> Full rights for
+                        unlimited personal and commercial client projects.
+                      </span>
                     </li>
                     <li className="flex items-start gap-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span><strong className="text-foreground font-semibold">Lifetime Access</strong> — Download future updates directly from your customer dashboard.</span>
+                      <span>
+                        <strong className="text-foreground font-semibold">Lifetime Updates:</strong> Download future
+                        versions directly from your customer library.
+                      </span>
                     </li>
                     <li className="flex items-start gap-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span><strong className="text-foreground font-semibold">Verified Architecture</strong> — Clean TypeScript, Next.js, and zero obfuscated code.</span>
+                      <span>
+                        <strong className="text-foreground font-semibold">Razorpay Secure Checkout:</strong> 256-bit
+                        encrypted UPI, Cards, and NetBanking payments.
+                      </span>
                     </li>
                   </ul>
                 </div>
               </div>
-
-              {/* Related Products */}
-              {relatedProducts.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <p className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                    More in {product.category.replace(/-/g, " ")}
-                  </p>
-                  <div className="space-y-2.5">
-                    {relatedProducts.map((rel) => (
-                      <Link
-                        key={rel.id}
-                        href={`/products/${rel.slug}`}
-                        className="flex items-center justify-between p-3.5 rounded-2xl border border-border/40 bg-card/30 hover:bg-muted/30 transition-all text-xs group"
-                      >
-                        <div className="truncate pr-3">
-                          <p className="font-bold text-foreground truncate group-hover:text-primary transition-colors">
-                            {rel.title}
-                          </p>
-                          <p className="text-muted-foreground text-[11px] truncate mt-0.5">
-                            {rel.shortDescription}
-                          </p>
-                        </div>
-                        <span className="font-mono font-bold text-foreground shrink-0 text-sm">
-                          {formatUSD(rel.price)}
-                        </span>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
+
+        {/* FULL-WIDTH SECTION 1: Builder Reviews & Feedback (Spans all columns, eliminating dead space!) */}
+        <div className="pt-8 border-t border-border/40">
+          <div className="p-6 sm:p-10 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md shadow-sm">
+            <ProductInteractionAndReviews
+              productId={product.id}
+              initialViews={product.views || 0}
+              initialDownloads={product.downloadsCount || 0}
+              initialSaves={product.saves || 0}
+              initialRating={product.rating || "5.0"}
+              initialRatingCount={product.ratingCount || 0}
+              userLoggedIn={!!user}
+              showStats={product.showStats}
+            />
+          </div>
+        </div>
+
+        {/* FULL-WIDTH SECTION 2: Related Products Carousel / Grid */}
+        {relatedProducts.length > 0 && (
+          <div className="pt-8 border-t border-border/40 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-xs font-bold uppercase tracking-wider text-primary">
+                  Explore Related Releases
+                </p>
+                <h3 className="text-2xl font-black tracking-tight text-foreground">
+                  More in {product.category.replace(/-/g, " ")}
+                </h3>
+              </div>
+              <Button asChild variant="outline" size="sm" className="rounded-xl font-bold self-start sm:self-auto text-xs">
+                <Link href={`/explore/${encodeURIComponent(product.category.toLowerCase())}`} className="flex items-center gap-1.5">
+                  <span>View All in Category</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </Link>
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {relatedProducts.map((rel) => (
+                <ProductCard
+                  key={rel.id}
+                  product={rel}
+                  categoryName={rel.category}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

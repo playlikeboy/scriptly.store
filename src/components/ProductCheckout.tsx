@@ -7,7 +7,7 @@ import { CreditCard, Download, Loader2, ShoppingCart, Trash, ChevronDown } from 
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/components/CartContext";
-import { getProductEffectivePrice } from "@/lib/price-utils";
+import { getProductEffectivePrice, formatPaiseToINR } from "@/lib/price-utils";
 
 interface ProductCheckoutProps {
   product: {
@@ -158,8 +158,7 @@ export default function ProductCheckout({
   };
 
   const formatPrice = (amountPaise: number) => {
-    const dollars = amountPaise / 100;
-    return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+    return formatPaiseToINR(amountPaise);
   };
 
   const handleCartToggle = (e: React.MouseEvent) => {
@@ -254,10 +253,9 @@ export default function ProductCheckout({
             <CreditCard className="w-4 h-4 mr-2" />
           )}
           <span>
-            {userLoggedIn 
-              ? (totalDisplayPrice === 0 ? "Download Free" : `Get Access — ${formatPrice(totalDisplayPrice)}`) 
-              : "Sign In to Buy"
-            }
+            {totalDisplayPrice === 0
+              ? "Download Free ZIP"
+              : `Instant Access — ${formatPrice(totalDisplayPrice)}`}
           </span>
         </Button>
 
