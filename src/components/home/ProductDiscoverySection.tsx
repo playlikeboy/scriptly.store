@@ -13,6 +13,7 @@ interface ProductDiscoverySectionProps {
 
 const FILTER_TABS = [
   { slug: "all", label: "All Assets" },
+  { slug: "featured", label: "⭐ Featured Products" },
   { slug: "saas-templates", label: "SaaS Boilerplates" },
   { slug: "landing-pages", label: "Landing Pages" },
   { slug: "templates", label: "UI Kits & Templates" },
@@ -29,6 +30,7 @@ export default function ProductDiscoverySection({
 
   const filteredProducts = products.filter((p) => {
     if (activeTab === "all") return true;
+    if (activeTab === "featured") return p.featured === true;
     if (activeTab === "free") return p.isFree || p.price === 0;
     return p.category === activeTab;
   });
@@ -53,12 +55,21 @@ export default function ProductDiscoverySection({
             </p>
           </div>
 
-          <Button asChild variant="outline" size="sm" className="rounded-xl font-bold self-start md:self-auto">
-            <Link href="/explore" className="flex items-center gap-1.5">
-              <span>View Full Catalog</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+            <Button asChild variant="outline" size="sm" className="rounded-xl font-bold border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors">
+              <Link href="/featured" className="flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                <span>Explore Featured</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="rounded-xl font-bold">
+              <Link href="/explore" className="flex items-center gap-1.5">
+                <span>View Full Catalog</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {/* Compact Category Navigation Pills */}

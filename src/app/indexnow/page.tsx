@@ -37,7 +37,7 @@ export default function IndexNowPage() {
       if (res.success) {
         setResult({
           success: true,
-          message: `Successfully submitted ${res.count} URLs to IndexNow!`,
+          message: `Successfully submitted ${res.count} URLs! ${res.summary ? `(${res.summary})` : ""}`,
           count: res.count,
         });
       } else {

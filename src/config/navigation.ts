@@ -7,6 +7,7 @@ export interface NavItem {
 
 export const MAIN_NAVIGATION: NavItem[] = [
   { href: "/explore", label: "Explore", description: "Browse developer tools, scripts and templates" },
+  { href: "/featured", label: "Featured", description: "Handpicked top premium releases" },
   { href: "/explore?category=all", label: "Categories", description: "Explore categories" },
   { href: "/free", label: "Free", description: "Open source boilerplates, scripts and tools" },
   { href: "/blog", label: "Learn", description: "Engineering guides, tutorials and monetization" },

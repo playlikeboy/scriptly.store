@@ -1,3 +1,5 @@
+import * as dotenv from "dotenv";
+dotenv.config();
 import sitemap from "@/app/sitemap";
 
 async function main() {
@@ -14,20 +16,32 @@ async function main() {
       urlList: urls,
     };
 
-    console.log("Sending payload to IndexNow API...");
-    const response = await fetch("https://api.indexnow.org/indexnow", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify(payload),
-    });
+    const endpoints = [
+      { name: "IndexNow Protocol", url: "https://api.indexnow.org/indexnow" },
+      { name: "Bing Direct", url: "https://www.bing.com/indexnow" },
+    ];
 
-    if (response.ok) {
-      console.log(`Successfully submitted ${urls.length} URLs to IndexNow! Status: ${response.status}`);
-    } else {
-      const text = await response.text();
-      console.error(`IndexNow submission failed: Status ${response.status}. Response: ${text}`);
+    for (const ep of endpoints) {
+      console.log(`\nSubmitting ${urls.length} URLs to ${ep.name} (${ep.url})...`);
+      try {
+        const response = await fetch(ep.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const text = await response.text();
+        if (response.ok) {
+          console.log(`✓ Successfully submitted to ${ep.name}! Status: ${response.status} ${response.statusText}`);
+          if (text) console.log(`  Response: ${text}`);
+        } else {
+          console.error(`✗ ${ep.name} submission failed: Status ${response.status}. Response: ${text}`);
+        }
+      } catch (err) {
+        console.error(`✗ Error connecting to ${ep.name}:`, err);
+      }
     }
   } catch (error) {
     console.error("Error executing IndexNow script:", error);

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Download, ShieldCheck, Code2, Zap } from "lucide-react";
+import { ArrowRight, Download, ShieldCheck, Code2, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import HeroProductVisual from "@/components/home/HeroProductVisual";
 
@@ -17,9 +17,19 @@ export default function HeroSection({ featuredProducts = [] }: HeroSectionProps)
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
           {/* Editorial Content Left Column */}
           <div className="lg:col-span-6 space-y-6">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-mono font-medium text-muted-foreground shadow-2xs">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Developer Commerce Platform</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-mono font-medium text-muted-foreground shadow-2xs">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Developer Commerce Platform</span>
+              </div>
+              <Link
+                href="/featured"
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-mono font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all shadow-2xs group"
+              >
+                <Sparkles className="h-3 w-3 animate-pulse text-amber-500 group-hover:rotate-12 transition-transform" />
+                <span>Explore Featured Products</span>
+                <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
             </div>
 
             <div className="space-y-3">
@@ -36,11 +46,17 @@ export default function HeroSection({ featuredProducts = [] }: HeroSectionProps)
             <div className="flex flex-wrap items-center gap-3.5 pt-2">
               <Button asChild size="lg" className="rounded-xl font-bold px-6">
                 <Link href="/explore" className="flex items-center gap-2">
-                  <span>Explore Products</span>
+                  <span>Explore Catalog</span>
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
-              <Button asChild variant="outline" size="lg" className="rounded-xl font-bold px-6">
+              <Button asChild variant="secondary" size="lg" className="rounded-xl font-bold px-5 border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 transition-all shadow-xs">
+                <Link href="/featured" className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <span>Featured Products</span>
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="rounded-xl font-bold px-5">
                 <Link href="/creator">
                   <span>Sell on Scriptly</span>
                 </Link>

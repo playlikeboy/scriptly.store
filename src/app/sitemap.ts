@@ -25,12 +25,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/refund",
     "/shipping",
     "/dmca",
+    "/affiliate",
+    "/directories",
     "/docs/route-guide",
   ].map((route) => ({
     url: `${baseUrl}${route}`,
     lastModified: new Date(),
     changeFrequency: "daily" as const,
-    priority: route === "" ? 1.0 : (route === "/explore" || route === "/free" || route === "/creator") ? 0.9 : 0.7,
+    priority: route === "" ? 1.0 : (route === "/explore" || route === "/featured" || route === "/free" || route === "/creator") ? 0.9 : 0.7,
   }));
 
   // Dynamic products

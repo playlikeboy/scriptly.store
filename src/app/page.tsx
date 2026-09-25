@@ -40,11 +40,11 @@ export default async function Page() {
   const [featuredData, catalogData, freeData, categories] = await Promise.all([
     getProductsAction({
       featuredOnly: true,
-      limit: 6,
+      limit: 12,
       sortBy: "rating",
     }),
     getProductsAction({
-      limit: 16,
+      limit: 20,
       sortBy: "newest",
     }),
     getProductsAction({
@@ -63,6 +63,12 @@ export default async function Page() {
   const weekendProducts = freeData.products.length > 0
     ? freeData.products
     : catalogData.products.filter((p) => p.isFree || p.price === 0).slice(0, 3);
+
+  // Combine featured and catalog products for interactive discovery filtering
+  const discoveryMap = new Map();
+  featuredData.products.forEach((p) => discoveryMap.set(p.id, p));
+  catalogData.products.forEach((p) => discoveryMap.set(p.id, p));
+  const discoveryProducts = Array.from(discoveryMap.values());
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -93,7 +99,7 @@ export default async function Page() {
 
       {/* 3. CORE PRODUCT DISCOVERY */}
       <ProductDiscoverySection
-        products={catalogData.products}
+        products={discoveryProducts}
         categories={categories}
       />
 
