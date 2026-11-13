@@ -1,59 +1,106 @@
 "use client";
 
-import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-export function ProductPagination({ totalPages, currentPage }: { totalPages: number, currentPage: number }) {
+type PageToken = number | "gap-start" | "gap-end";
+
+/** First, last, and current +/- 1, with gaps collapsed. O(1) in totalPages. */
+function getPageTokens(totalPages: number, currentPage: number): PageToken[] {
+  const pages = new Set<number>([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+  const tokens: PageToken[] = [];
+  sorted.forEach((page, i) => {
+    const prev = sorted[i - 1];
+    if (prev !== undefined && page - prev > 1) {
+      tokens.push(page < currentPage ? "gap-start" : "gap-end");
+    }
+    tokens.push(page);
+  });
+  return tokens;
+}
+
+export function ProductPagination({ totalPages, currentPage }: { totalPages: number; currentPage: number }) {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
 
   if (totalPages <= 1) return null;
 
+  const safeCurrent = Math.min(Math.max(1, currentPage), totalPages);
+
   const createPageUrl = (page: number) => {
     const params = new URLSearchParams(searchParams.toString());
-    params.set("page", page.toString());
-    return `?${params.toString()}`;
+    if (page <= 1) params.delete("page");
+    else params.set("page", String(page));
+    const qs = params.toString();
+    return `${pathname}${qs ? `?${qs}` : ""}`;
   };
 
-  return (
-    <Pagination className="mt-12">
-      <PaginationContent>
-        {currentPage > 1 && (
-          <PaginationItem>
-            <PaginationPrevious href={createPageUrl(currentPage - 1)} />
-          </PaginationItem>
-        )}
-        
-        {[...Array(totalPages)].map((_, i) => {
-          const page = i + 1;
-          // Basic logic to show first, last and current +/- 1
-          if (
-            page === 1 ||
-            page === totalPages ||
-            (page >= currentPage - 1 && page <= currentPage + 1)
-          ) {
-            return (
-              <PaginationItem key={page}>
-                <PaginationLink href={createPageUrl(page)} isActive={currentPage === page}>
-                  {page}
-                </PaginationLink>
-              </PaginationItem>
-            );
-          } else if (page === currentPage - 2 || page === currentPage + 2) {
-            return (
-              <PaginationItem key={page}>
-                <PaginationEllipsis />
-              </PaginationItem>
-            );
-          }
-          return null;
-        })}
+  const tokens = getPageTokens(totalPages, safeCurrent);
 
-        {currentPage < totalPages && (
-          <PaginationItem>
-            <PaginationNext href={createPageUrl(currentPage + 1)} />
-          </PaginationItem>
+  return (
+    <nav aria-label="Pagination" className="flex w-full items-center justify-between gap-2 sm:justify-center">
+      {safeCurrent > 1 ? (
+        <Button asChild variant="ghost" size="sm">
+          <Link href={createPageUrl(safeCurrent - 1)} rel="prev" aria-label="Previous page">
+            <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            <span>Previous</span>
+          </Link>
+        </Button>
+      ) : (
+        <Button variant="ghost" size="sm" disabled aria-hidden="true" tabIndex={-1}>
+          <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          <span>Previous</span>
+        </Button>
+      )}
+
+      <ul className="hidden items-center gap-1 sm:flex">
+        {tokens.map((token) =>
+          typeof token === "number" ? (
+            <li key={token}>
+              <Button
+                asChild
+                variant={token === safeCurrent ? "outline" : "ghost"}
+                size="icon-sm"
+                className={cn("tabular-nums", token === safeCurrent && "text-foreground")}
+              >
+                <Link
+                  href={createPageUrl(token)}
+                  aria-label={`Page ${token}`}
+                  aria-current={token === safeCurrent ? "page" : undefined}
+                >
+                  {token}
+                </Link>
+              </Button>
+            </li>
+          ) : (
+            <li key={token} aria-hidden="true" className="flex size-8 items-center justify-center text-muted-foreground">
+              …
+            </li>
+          )
         )}
-      </PaginationContent>
-    </Pagination>
+      </ul>
+
+      <p className="text-sm tabular-nums text-muted-foreground sm:hidden">
+        Page {safeCurrent} of {totalPages}
+      </p>
+
+      {safeCurrent < totalPages ? (
+        <Button asChild variant="ghost" size="sm">
+          <Link href={createPageUrl(safeCurrent + 1)} rel="next" aria-label="Next page">
+            <span>Next</span>
+            <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          </Link>
+        </Button>
+      ) : (
+        <Button variant="ghost" size="sm" disabled aria-hidden="true" tabIndex={-1}>
+          <span>Next</span>
+          <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
+        </Button>
+      )}
+    </nav>
   );
 }

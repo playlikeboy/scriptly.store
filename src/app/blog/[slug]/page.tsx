@@ -1,9 +1,9 @@
 import { BLOG_POSTS } from "@/lib/blog-data";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Clock, Calendar, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Metadata } from "next";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +33,284 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+const dateFormatter = new Intl.DateTimeFormat("en-IN", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+function formatDate(value: string) {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : dateFormatter.format(d);
+}
+
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function slugify(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[`*_]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+}
+
+function isSafeHref(href: string) {
+  return /^(https?:\/\/|\/|#|mailto:)/i.test(href);
+}
+
+/**
+ * Inline markdown: escapes HTML first (so `<Image />` in prose renders as text,
+ * not as a DOM element), then applies code, bold and link formatting.
+ */
+function parseInlineStyles(text: string) {
+  let html = text;
+  // Unescape common characters
+  html = html.replace(/\\`/g, "`");
+  html = html.replace(/\\\*/g, "*");
+  html = html.replace(/\\_/g, "_");
+
+  html = escapeHtml(html);
+
+  // Code spans first so their contents are not further formatted
+  const codeSpans: string[] = [];
+  html = html.replace(/`(.*?)`/g, (_m, code: string) => {
+    codeSpans.push(
+      `<code class="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">${code}</code>`
+    );
+    return `\u0000${codeSpans.length - 1}\u0000`;
+  });
+
+  // Bold: **text** -> <strong>text</strong>
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-foreground">$1</strong>');
+
+  // Markdown links: [text](url)
+  html = html.replace(/\[(.*?)\]\((.*?)\)/g, (_m, label: string, href: string) => {
+    const decoded = href.replace(/&amp;/g, "&");
+    if (!isSafeHref(decoded)) return label;
+    const external = /^https?:\/\//i.test(decoded) && !decoded.includes("scriptly.store");
+    return `<a href="${href}" class="text-primary underline decoration-primary/40 hover:decoration-primary"${
+      external ? ' target="_blank" rel="noopener noreferrer"' : ""
+    }>${label}</a>`;
+  });
+
+  html = html.replace(/\u0000(\d+)\u0000/g, (_m, idx: string) => codeSpans[Number(idx)]);
+
+  return html;
+}
+
+// Parse custom markdown layout simply and correctly line-by-line
+function renderContent(markdown: string) {
+  const lines = markdown.split("\n");
+  const elements: ReactNode[] = [];
+
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // 1. Code blocks
+    if (trimmed.startsWith("```")) {
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      // skip the closing ```
+      i++;
+      elements.push(
+        <figure key={`code-${i}`} className="my-8 overflow-hidden rounded-xl border border-border bg-card">
+          {lang && (
+            <figcaption className="border-b border-border px-4 py-2 font-mono text-xs text-muted-foreground">
+              {lang}
+            </figcaption>
+          )}
+          <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-relaxed text-foreground">
+            <code className={lang ? `language-${lang}` : ""}>{codeLines.join("\n")}</code>
+          </pre>
+        </figure>
+      );
+      continue;
+    }
+
+    // 2. Tables
+    if (trimmed.startsWith("|")) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+
+      const rows = tableLines.map((row) => {
+        const cells = row.split("|").map((c) => c.trim());
+        if (cells[0] === "") cells.shift();
+        if (cells[cells.length - 1] === "") cells.pop();
+        return cells;
+      });
+
+      const filteredRows = rows.filter((row) => !row.every((cell) => /^:?-+:?$/.test(cell)));
+
+      if (filteredRows.length > 0) {
+        const headers = filteredRows[0];
+        const bodyRows = filteredRows.slice(1);
+
+        elements.push(
+          <div key={`table-${i}`} className="my-8 overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-foreground/20">
+                  {headers.map((h, idx) => (
+                    <th
+                      key={idx}
+                      scope="col"
+                      className="px-3 py-2.5 text-left font-semibold text-foreground first:pl-0"
+                      dangerouslySetInnerHTML={{ __html: parseInlineStyles(h) }}
+                    />
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, rIdx) => (
+                  <tr key={rIdx} className="border-b border-border">
+                    {row.map((cell, cIdx) => (
+                      <td
+                        key={cIdx}
+                        className="px-3 py-2.5 align-top text-muted-foreground first:pl-0 tabular"
+                        dangerouslySetInnerHTML={{ __html: parseInlineStyles(cell) }}
+                      />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      continue;
+    }
+
+    // 3. Blockquotes
+    if (trimmed.startsWith(">")) {
+      const bqLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) {
+        let bqLine = lines[i].trim().slice(1);
+        if (bqLine.startsWith(" ")) bqLine = bqLine.slice(1);
+        bqLines.push(bqLine);
+        i++;
+      }
+
+      elements.push(
+        <blockquote
+          key={`bq-${i}`}
+          className="my-8 rounded-xl bg-secondary px-5 py-4 font-display text-lg leading-relaxed text-foreground"
+          dangerouslySetInnerHTML={{ __html: parseInlineStyles(bqLines.join(" ")) }}
+        />
+      );
+      continue;
+    }
+
+    // 4. Lists (unordered & ordered)
+    const ulMatch = trimmed.match(/^[-*]\s+(.*)/);
+    const olMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+
+    if (ulMatch) {
+      const listItems: string[] = [];
+      while (i < lines.length) {
+        const match = lines[i].trim().match(/^[-*]\s+(.*)/);
+        if (!match) break;
+        listItems.push(match[1]);
+        i++;
+      }
+      elements.push(
+        <ul key={`ul-${i}`} className="my-5 list-disc space-y-2 pl-5 marker:text-muted-foreground">
+          {listItems.map((item, idx) => (
+            <li key={idx} className="pl-1" dangerouslySetInnerHTML={{ __html: parseInlineStyles(item) }} />
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (olMatch) {
+      const listItems: string[] = [];
+      while (i < lines.length) {
+        const match = lines[i].trim().match(/^(\d+)\.\s+(.*)/);
+        if (!match) break;
+        listItems.push(match[2]);
+        i++;
+      }
+      elements.push(
+        <ol key={`ol-${i}`} className="my-5 list-decimal space-y-2 pl-5 marker:text-muted-foreground marker:tabular-nums">
+          {listItems.map((item, idx) => (
+            <li key={idx} className="pl-1" dangerouslySetInnerHTML={{ __html: parseInlineStyles(item) }} />
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // 5. Horizontal rules
+    if (trimmed === "---") {
+      elements.push(<hr key={`hr-${i}`} className="my-12 border-t border-border" />);
+      i++;
+      continue;
+    }
+
+    // 6. Headings (article H1 is the page title, so markdown headings start at h2)
+    if (trimmed.startsWith("#### ")) {
+      const text = trimmed.replace("#### ", "");
+      elements.push(
+        <h4 key={`h4-${i}`} className="mt-8 mb-2 text-base font-semibold text-foreground"
+          dangerouslySetInnerHTML={{ __html: parseInlineStyles(text) }} />
+      );
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith("### ")) {
+      const text = trimmed.replace("### ", "");
+      elements.push(
+        <h3 key={`h3-${i}`} id={slugify(text)} className="mt-10 mb-3 scroll-mt-24 text-lg font-semibold text-foreground"
+          dangerouslySetInnerHTML={{ __html: parseInlineStyles(text) }} />
+      );
+      i++;
+      continue;
+    }
+    if (trimmed.startsWith("## ") || trimmed.startsWith("# ")) {
+      const text = trimmed.replace(/^#{1,2} /, "");
+      elements.push(
+        <h2 key={`h2-${i}`} id={slugify(text)} className="mt-14 mb-4 scroll-mt-24 font-display text-2xl md:text-[1.75rem] leading-tight text-foreground"
+          dangerouslySetInnerHTML={{ __html: parseInlineStyles(text) }} />
+      );
+      i++;
+      continue;
+    }
+
+    // 7. Empty lines
+    if (!trimmed) {
+      i++;
+      continue;
+    }
+
+    // 8. Paragraph
+    elements.push(
+      <p key={`p-${i}`} className="my-5" dangerouslySetInnerHTML={{ __html: parseInlineStyles(trimmed) }} />
+    );
+    i++;
+  }
+
+  return elements;
+}
+
 export default async function BlogPostPage({ params }: PageProps) {
   const { slug } = await params;
   const post = BLOG_POSTS.find((p) => p.slug === slug);
@@ -40,227 +318,12 @@ export default async function BlogPostPage({ params }: PageProps) {
     notFound();
   }
 
-  // Parse custom markdown layout simply and correctly line-by-line
-  const renderContent = (markdown: string) => {
-    const lines = markdown.split("\n");
-    const elements: React.ReactNode[] = [];
-    
-    let i = 0;
-    
-    while (i < lines.length) {
-      const line = lines[i];
-      const trimmed = line.trim();
-      
-      // 1. Handle Code Blocks
-      if (trimmed.startsWith("```")) {
-        const lang = trimmed.slice(3).trim();
-        const codeLines: string[] = [];
-        i++;
-        while (i < lines.length && !lines[i].trim().startsWith("```")) {
-          codeLines.push(lines[i]);
-          i++;
-        }
-        // skip the closing ```
-        i++;
-        elements.push(
-          <pre key={`code-${i}`} className="my-6 p-5 bg-card border-2 border-border rounded-2xl overflow-x-auto font-mono text-xs text-foreground shadow-sm">
-            <code className={lang ? `language-${lang}` : ""}>{codeLines.join("\n")}</code>
-          </pre>
-        );
-        continue;
-      }
-      
-      // 2. Handle Tables
-      if (trimmed.startsWith("|")) {
-        const tableLines: string[] = [];
-        while (i < lines.length && lines[i].trim().startsWith("|")) {
-          tableLines.push(lines[i].trim());
-          i++;
-        }
-        
-        const rows = tableLines.map(row => {
-          const cells = row.split("|").map(c => c.trim());
-          if (cells[0] === "") cells.shift();
-          if (cells[cells.length - 1] === "") cells.pop();
-          return cells;
-        });
-        
-        const filteredRows = rows.filter(row => {
-          return !row.every(cell => /^:?-+:?$/.test(cell));
-        });
-        
-        if (filteredRows.length > 0) {
-          const headers = filteredRows[0];
-          const bodyRows = filteredRows.slice(1);
-          
-          elements.push(
-            <div key={`table-${i}`} className="my-6 overflow-x-auto rounded-xl border-2 border-border shadow-sm">
-              <table className="min-w-full divide-y-2 divide-border text-sm">
-                <thead className="bg-card">
-                  <tr>
-                    {headers.map((h, idx) => (
-                      <th key={idx} className="px-4 py-3 text-left font-black text-xs text-foreground uppercase tracking-wider border-r border-border last:border-r-0" dangerouslySetInnerHTML={{ __html: parseInlineStyles(h) }} />
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border bg-background/50">
-                  {bodyRows.map((row, rIdx) => (
-                    <tr key={rIdx} className="hover:bg-card/20 transition-colors">
-                      {row.map((cell, cIdx) => (
-                        <td key={cIdx} className="px-4 py-3 text-muted-foreground font-medium border-r border-border last:border-r-0" dangerouslySetInnerHTML={{ __html: parseInlineStyles(cell) }} />
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        }
-        continue;
-      }
-      
-      // 3. Handle Blockquotes
-      if (trimmed.startsWith(">")) {
-        const bqLines: string[] = [];
-        while (i < lines.length && lines[i].trim().startsWith(">")) {
-          let bqLine = lines[i].trim().slice(1);
-          if (bqLine.startsWith(" ")) bqLine = bqLine.slice(1);
-          bqLines.push(bqLine);
-          i++;
-        }
-        
-        elements.push(
-          <div key={`bq-${i}`} className="my-6 pl-4 border-l-4 border-primary bg-primary/5 py-3 pr-4 rounded-r-xl text-muted-foreground italic font-medium leading-relaxed" dangerouslySetInnerHTML={{ __html: parseInlineStyles(bqLines.join(" ")) }} />
-        );
-        continue;
-      }
-      
-      // 4. Handle Lists (unordered & ordered)
-      const ulMatch = trimmed.match(/^[-*]\s+(.*)/);
-      const olMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
-      
-      if (ulMatch) {
-        const listItems: string[] = [];
-        while (i < lines.length) {
-          const currentTrimmed = lines[i].trim();
-          const match = currentTrimmed.match(/^[-*]\s+(.*)/);
-          if (match) {
-            listItems.push(match[1]);
-            i++;
-          } else {
-            break;
-          }
-        }
-        elements.push(
-          <ul key={`ul-${i}`} className="list-disc pl-6 my-4 space-y-2 text-sm md:text-base text-muted-foreground font-medium leading-relaxed">
-            {listItems.map((item, idx) => (
-              <li key={idx} dangerouslySetInnerHTML={{ __html: parseInlineStyles(item) }} />
-            ))}
-          </ul>
-        );
-        continue;
-      }
-      
-      if (olMatch) {
-        const listItems: string[] = [];
-        while (i < lines.length) {
-          const currentTrimmed = lines[i].trim();
-          const match = currentTrimmed.match(/^(\d+)\.\s+(.*)/);
-          if (match) {
-            listItems.push(match[2]);
-            i++;
-          } else {
-            break;
-          }
-        }
-        elements.push(
-          <ol key={`ol-${i}`} className="list-decimal pl-6 my-4 space-y-2 text-sm md:text-base text-muted-foreground font-medium leading-relaxed">
-            {listItems.map((item, idx) => (
-              <li key={idx} dangerouslySetInnerHTML={{ __html: parseInlineStyles(item) }} />
-            ))}
-          </ol>
-        );
-        continue;
-      }
-      
-      // 5. Handle Horizontal Rules
-      if (trimmed === "---") {
-        elements.push(<hr key={`hr-${i}`} className="my-8 border-t-2 border-border/60" />);
-        i++;
-        continue;
-      }
-      
-      // 6. Handle Headings
-      if (trimmed.startsWith("#### ")) {
-        elements.push(
-          <h4 key={`h4-${i}`} className="text-base font-black text-foreground mt-4 mb-2 tracking-tight">
-            {trimmed.replace("#### ", "")}
-          </h4>
-        );
-        i++;
-        continue;
-      }
-      if (trimmed.startsWith("### ")) {
-        elements.push(
-          <h3 key={`h3-${i}`} className="text-lg font-black text-foreground mt-6 mb-3 tracking-tight">
-            {trimmed.replace("### ", "")}
-          </h3>
-        );
-        i++;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        elements.push(
-          <h2 key={`h2-${i}`} className="text-xl md:text-2xl font-black text-foreground mt-8 mb-4 tracking-tight leading-tight">
-            {trimmed.replace("## ", "")}
-          </h2>
-        );
-        i++;
-        continue;
-      }
-      
-      // 7. Empty lines
-      if (!trimmed) {
-        i++;
-        continue;
-      }
-      
-      // 8. Normal Paragraph
-      elements.push(
-        <p 
-          key={`p-${i}`} 
-          className="my-4 text-sm md:text-base text-muted-foreground font-medium leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: parseInlineStyles(trimmed) }}
-        />
-      );
-      i++;
-    }
-    
-    return elements;
-  };
-
-  // Helper to parse links and bold inline styles
-  const parseInlineStyles = (text: string) => {
-    let html = text;
-    // Unescape common characters
-    html = html.replace(/\\`/g, "`");
-    html = html.replace(/\\\*/g, "*");
-    html = html.replace(/\\_/g, "_");
-    
-    // Bold: **text** -> <strong>text</strong>
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-extrabold text-foreground">$1</strong>');
-    
-    // Code blocks: `code` -> <code class="bg-muted px-1.5 py-0.5 rounded font-mono text-xs text-foreground">code</code>
-    html = html.replace(/`(.*?)`/g, '<code class="bg-muted px-1.5 py-0.5 rounded font-mono text-[11px] text-foreground border border-border/60">$1</code>');
-    
-    // Markdown links: [text](url) -> <a href="url" class="text-primary hover:underline font-black">text</a>
-    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" class="text-primary hover:underline font-black">$1</a>');
-    
-    return html;
-  };
+  const morePosts = BLOG_POSTS.filter((p) => p.slug !== post.slug)
+    .sort((a, b) => Number(b.category === post.category) - Number(a.category === post.category))
+    .slice(0, 3);
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-foreground relative overflow-hidden">
+    <div className="bg-background text-foreground">
       {/* BlogPosting JSON-LD Schema */}
       <script
         type="application/ld+json"
@@ -325,101 +388,124 @@ export default async function BlogPostPage({ params }: PageProps) {
           })
         }}
       />
-      <CyberBackground />
 
-      <div className="container max-w-4xl mx-auto px-4 py-12 md:py-16 space-y-10">
-        
-        {/* Navigation Breadcrumbs */}
-        <nav className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-          <Link href="/blog" className="hover:text-foreground flex items-center gap-1">
-            <ArrowLeft className="w-3.5 h-3.5" /> Blog
-          </Link>
-          <ChevronRight className="w-3 h-3" />
-          <span className="text-foreground max-w-[200px] truncate">{post.category}</span>
-        </nav>
+      <article className="px-4 sm:px-6 lg:px-8 pt-10 pb-16 md:pt-14 md:pb-24">
+        <header className="mx-auto max-w-[68ch]">
+          <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+            <ol className="flex flex-wrap items-center gap-1.5">
+              <li>
+                <Link href="/blog" className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
+                  <ArrowLeft className="size-4" strokeWidth={1.75} aria-hidden="true" /> Blog
+                </Link>
+              </li>
+              <li aria-hidden="true">/</li>
+              <li>
+                <Link
+                  href={{ pathname: "/blog", query: { category: post.category.toLowerCase() } }}
+                  className="hover:text-foreground transition-colors"
+                >
+                  {post.category}
+                </Link>
+              </li>
+            </ol>
+          </nav>
 
-        {/* Article Header */}
-        <header className="space-y-6">
-          <div className="space-y-3">
-            <span className="inline-block px-3 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider rounded-lg border border-primary/20">
-              {post.category}
+          <h1 className="mt-8 font-display text-3xl md:text-5xl leading-[1.1] text-foreground">
+            {post.title}
+          </h1>
+          <p className="mt-5 text-lg text-muted-foreground leading-relaxed">{post.excerpt}</p>
+
+          <div className="mt-8 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-4 text-sm text-muted-foreground">
+            <span>
+              By <span className="text-foreground">{post.author.name}</span>
+              {post.author.role && <>, {post.author.role}</>}
             </span>
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-black text-foreground tracking-tight leading-tight font-sans">
-              {post.title}
-            </h1>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-4 py-4 border-y border-border/40">
-            <div className="flex items-center gap-3">
-              <div>
-                <p className="text-xs font-black text-foreground">By {post.author.name}</p>
-                <p className="text-[10px] text-muted-foreground font-bold">{post.author.role}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-6 text-[11px] font-extrabold text-muted-foreground uppercase">
-              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> {post.createdAt}</span>
-              <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {post.readTime}</span>
-            </div>
+            <span aria-hidden="true">·</span>
+            <time dateTime={post.createdAt}>{formatDate(post.createdAt)}</time>
+            <span aria-hidden="true">·</span>
+            <span>{post.readTime}</span>
           </div>
         </header>
 
-        {/* Feature Image Banner */}
-        <div className="aspect-[21/9] w-full rounded-3xl overflow-hidden border-2 border-border shadow-md bg-muted">
+        <figure className="mx-auto mt-10 max-w-5xl overflow-hidden rounded-2xl bg-muted">
           <img
             src={post.thumbnail}
-            alt={post.title}
-            className="w-full h-full object-cover"
+            alt=""
+            width={1600}
+            height={685}
+            decoding="async"
+            fetchPriority="high"
+            className="aspect-[21/9] w-full object-cover"
           />
+        </figure>
+
+        {/* Body */}
+        <div className="mx-auto mt-12 max-w-[68ch] text-[1.0625rem] leading-[1.75] text-foreground/85 [&_strong]:text-foreground">
+          {renderContent(post.content)}
         </div>
 
-        {/* Main Content prose */}
-        <main className="max-w-3xl mx-auto py-4 prose dark:prose-invert">
-          {renderContent(post.content)}
-        </main>
-
-        {/* Footer Author Callout */}
-        <footer className="max-w-3xl mx-auto border-t border-border/60 pt-8 mt-12">
-          <div className="p-6 bg-card/45 border-2 border-border rounded-3xl flex flex-col md:flex-row items-center gap-6 shadow-[0_3px_0_var(--border)]">
-            <div className="space-y-2 text-center md:text-left flex-1">
-              <p className="text-xs text-primary font-black uppercase tracking-wider">
-                {post.author.bio ? "About the Author" : "About the Team"}
-              </p>
-              <h4 className="text-sm font-black text-foreground">
-                {post.author.name} {post.author.role ? `— ${post.author.role}` : ""}
-              </h4>
-              <p className="text-xs text-muted-foreground font-medium leading-relaxed">
-                {post.author.bio || `The ${post.author.name} is a group of passionate software developers, templates designers, and technical writers specializing in modern framework architectures, database scaling, prompt engineering, and SaaS growth frameworks.`}
-              </p>
-              {(post.author.github || post.author.twitter) && (
-                <div className="flex gap-4 pt-2">
-                  {post.author.github && (
-                    <a
-                      href={post.author.github}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary hover:underline font-bold"
-                    >
-                      GitHub Profile
-                    </a>
-                  )}
-                  {post.author.twitter && (
-                    <a
-                      href={post.author.twitter}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary hover:underline font-bold"
-                    >
-                      Twitter / X
-                    </a>
-                  )}
-                </div>
+        {/* Author */}
+        <footer className="mx-auto mt-16 max-w-[68ch] border-t border-border pt-8">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            {post.author.bio ? "About the author" : "About the team"}
+          </h2>
+          <p className="mt-2 text-base font-semibold text-foreground">
+            {post.author.name}
+            {post.author.role && <span className="font-normal text-muted-foreground"> — {post.author.role}</span>}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+            {post.author.bio || `The ${post.author.name} is a group of passionate software developers, templates designers, and technical writers specializing in modern framework architectures, database scaling, prompt engineering, and SaaS growth frameworks.`}
+          </p>
+          {(post.author.github || post.author.twitter) && (
+            <div className="mt-3 flex gap-5 text-sm">
+              {post.author.github && (
+                <a href={post.author.github} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  GitHub profile
+                </a>
+              )}
+              {post.author.twitter && (
+                <a href={post.author.twitter} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  Twitter / X
+                </a>
               )}
             </div>
-          </div>
+          )}
         </footer>
+      </article>
 
-
-      </div>
+      {morePosts.length > 0 && (
+        <section aria-labelledby="more-heading" className="border-t border-border">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 md:py-20">
+            <div className="mb-8 flex items-baseline justify-between gap-4">
+              <h2 id="more-heading" className="font-display text-2xl text-foreground">Keep reading</h2>
+              <Link href="/blog" className="text-sm text-primary hover:underline">All articles</Link>
+            </div>
+            <ul className="grid grid-cols-1 gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+              {morePosts.map((p) => (
+                <li key={p.slug}>
+                  <Link href={`/blog/${p.slug}`} className="group block rounded-2xl focus-visible:outline-offset-4">
+                    <div className="overflow-hidden rounded-2xl bg-muted">
+                      <img
+                        src={p.thumbnail}
+                        alt=""
+                        width={600}
+                        height={375}
+                        loading="lazy"
+                        decoding="async"
+                        className="aspect-[16/10] w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+                      />
+                    </div>
+                    <p className="mt-4 text-xs text-muted-foreground">{p.category} · {p.readTime}</p>
+                    <h3 className="mt-1.5 text-base font-semibold leading-snug text-foreground transition-colors group-hover:text-primary line-clamp-2">
+                      {p.title}
+                    </h3>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -1,15 +1,38 @@
-import { getProductsAction, getCategoriesAction } from "@/lib/actions/products";
-import SearchFilter, { ProductCard } from "@/components/SearchFilter";
-import { ProductPagination } from "@/components/ProductPagination";
 import { Metadata } from "next";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import { getProductsAction, getCategoriesAction } from "@/lib/actions/products";
+import {
+  ActiveFilters,
+  CATALOG_SORTS,
+  CatalogEmpty,
+  CatalogHeader,
+  CatalogPagination,
+  CatalogShell,
+  CatalogToolbar,
+  ChipNav,
+  ProductGrid,
+  ResultCount,
+  buildHref,
+  categoryNameMap,
+  parsePage,
+  parsePrice,
+  parseSort,
+  type ActiveFilter,
+  type PriceKey,
+  type SortKey,
+} from "@/app/explore/_components/catalog";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 36;
 
 interface PageProps {
   searchParams: Promise<{
     search?: string;
+    q?: string;
+    category?: string;
     page?: string;
+    sort?: string;
+    price?: string;
   }>;
 }
 
@@ -26,62 +49,100 @@ export async function generateMetadata({ searchParams }: PageProps): Promise<Met
 
 export default async function SearchPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
-  const currentSearch = resolvedParams.search || "";
-  const currentPage = parseInt(resolvedParams.page || "1");
+  const currentSearch = (resolvedParams.search || resolvedParams.q || "").trim();
+  const currentCategory = resolvedParams.category && resolvedParams.category !== "all" ? resolvedParams.category : undefined;
+  const currentPage = parsePage(resolvedParams.page);
+  const currentSort = parseSort(resolvedParams.sort, CATALOG_SORTS, "newest");
+  const currentPrice = parsePrice(resolvedParams.price);
 
-  const { products: productsList, totalPages, total } = await getProductsAction({
-    search: currentSearch,
-    page: currentPage,
-    limit: 36,
-  });
+  const [categoriesList, { products: productsList, totalPages, total }] = await Promise.all([
+    getCategoriesAction(),
+    getProductsAction({
+      search: currentSearch || undefined,
+      category: currentCategory,
+      page: currentPage,
+      limit: PAGE_SIZE,
+      sortBy: currentSort,
+      priceType: currentPrice,
+    }),
+  ]);
 
-  const categoriesList = await getCategoriesAction();
+  const activeCategory = categoriesList.find((c) => c.slug === currentCategory);
+
+  const state = {
+    search: currentSearch || undefined,
+    category: currentCategory,
+    sort: currentSort !== "newest" ? currentSort : undefined,
+    price: currentPrice !== "all" ? currentPrice : undefined,
+  };
+  const hrefWith = (overrides: Partial<Record<keyof typeof state, string | undefined>>) =>
+    buildHref("/search", { ...state, ...overrides });
+
+  const filters: ActiveFilter[] = [];
+  if (currentSearch) filters.push({ label: `“${currentSearch}”`, removeHref: hrefWith({ search: undefined }) });
+  if (currentCategory) {
+    filters.push({ label: activeCategory?.name || currentCategory, removeHref: hrefWith({ category: undefined }) });
+  }
+  if (currentPrice !== "all") {
+    filters.push({ label: currentPrice === "free" ? "Free" : "Paid", removeHref: hrefWith({ price: undefined }) });
+  }
 
   return (
-    <div className="flex flex-col min-h-screen relative overflow-hidden bg-background">
-      <CyberBackground />
-      <div className="container max-w-7xl mx-auto px-4 py-12 md:py-20 space-y-12 relative z-10">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border/60 pb-10">
-          <div className="space-y-2">
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tighter text-foreground">
-              {currentSearch ? "Results" : "Search"}
-            </h1>
-            <p className="text-muted-foreground font-medium flex items-center gap-2">
-              {currentSearch ? (
-                <>Found {total} matches for <span className="text-foreground">"{currentSearch}"</span></>
-              ) : (
-                <>Browse our entire collection of digital assets</>
-              )}
-            </p>
-          </div>
-        </div>
+    <CatalogShell>
+      <CatalogHeader
+        title={currentSearch ? <>Results for “{currentSearch}”</> : "Search the library"}
+        description={
+          currentSearch
+            ? `Found ${total.toLocaleString("en-IN")} ${total === 1 ? "match" : "matches"}.`
+            : "Browse our entire collection of digital assets."
+        }
+      />
 
-        <div className="sticky top-[3.5rem] z-30 bg-background/80 backdrop-blur-sm py-4 border-b border-border/40">
-           <SearchFilter categories={categoriesList} />
-        </div>
-
-        <div className="space-y-16">
-          {productsList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-32 border border-dashed border-border rounded-[2.5rem] bg-card/30 space-y-4">
-              <p className="text-muted-foreground text-sm font-medium">No assets found matching your search.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-              {productsList.map((prod) => (
-                <ProductCard 
-                  key={prod.id} 
-                  prod={prod} 
-                  categoryName={categoriesList.find((c) => c.slug === prod.category)?.name || prod.category} 
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="pt-8 border-t border-border/40">
-            <ProductPagination totalPages={totalPages} currentPage={currentPage} />
-          </div>
-        </div>
+      <div className="mb-6">
+        <ChipNav
+          label="Categories"
+          items={[
+            { label: "All", href: hrefWith({ category: undefined }), active: !currentCategory },
+            ...categoriesList.map((cat) => ({
+              label: cat.name,
+              href: hrefWith({ category: cat.slug }),
+              active: currentCategory === cat.slug,
+            })),
+          ]}
+        />
       </div>
-    </div>
+
+      <CatalogToolbar
+        action="/search"
+        hidden={{ category: state.category, price: state.price }}
+        search={currentSearch}
+        searchPlaceholder="Search products, stacks, tags"
+        price={{ current: currentPrice, hrefFor: (p: PriceKey) => hrefWith({ price: p === "all" ? undefined : p }) }}
+        sort={{
+          current: currentSort,
+          options: CATALOG_SORTS,
+          hrefFor: (s: SortKey) => hrefWith({ sort: s === "newest" ? undefined : s }),
+        }}
+      />
+
+      <ActiveFilters filters={filters} clearHref="/search" />
+
+      <div className="mb-6 mt-6">
+        <ResultCount total={total} page={currentPage} limit={PAGE_SIZE} />
+      </div>
+
+      {productsList.length === 0 ? (
+        <CatalogEmpty
+          title={currentSearch ? `Nothing matches “${currentSearch}”` : "No products found"}
+          body="Check the spelling, try a broader term, or browse by category."
+          action={{ href: "/explore", label: "Browse all products" }}
+        />
+      ) : (
+        <>
+          <ProductGrid products={productsList} categoryNames={categoryNameMap(categoriesList)} />
+          <CatalogPagination totalPages={totalPages} currentPage={currentPage} />
+        </>
+      )}
+    </CatalogShell>
   );
 }

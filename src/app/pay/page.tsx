@@ -1,9 +1,9 @@
 import { Metadata } from "next";
 import PaymentCard from "@/components/pay/PaymentCard";
 import KeyUnlockCard from "@/components/pay/KeyUnlockCard";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import PayShell from "@/app/pay/PayShell";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, AlertCircle, ShieldAlert, Lock } from "lucide-react";
+import { ArrowRight, CircleAlert, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { decodePaymentLinkPayload } from "@/lib/payments/link-encoder";
 import { logLinkActivityAction } from "@/lib/actions/payment-links";
@@ -85,106 +85,57 @@ export default async function DynamicPaymentPage({ searchParams }: SearchParamsP
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col justify-between relative overflow-hidden">
-      <CyberBackground />
-
-      {/* Minimal Header */}
-      <header className="border-b border-border/40 bg-background/50 backdrop-blur-md relative z-10">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-xl bg-[#58CC02] flex items-center justify-center text-white font-black text-base shadow-[0_3px_0_#46A302]">
-              S
-            </div>
-            <span className="font-black text-lg tracking-tight group-hover:text-[#58CC02] transition-colors">
-              Scriptly<span className="text-[#58CC02]">Pay</span>
-            </span>
-          </Link>
-
-          <div className="flex items-center gap-3">
-            {isVerifiedSigned && (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider border border-emerald-500/20">
-                <Lock className="w-3 h-3" /> Cryptographically Verified
-              </span>
-            )}
-            <Button asChild variant="ghost" size="sm" className="text-xs font-bold text-muted-foreground hover:text-foreground">
-              <Link href="/">
-                <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Back to Store
+    <PayShell verified={isVerifiedSigned && isValid}>
+      {requiresKey && encodedToken ? (
+        // Keyed on the attempted key so a wrong key remounts with a fresh error/loading state.
+        <KeyUnlockCard key={userKey ?? "no-key"} token={encodedToken} initialError={userKey ? tamperError : null} />
+      ) : tamperError ? (
+        <div role="alert" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 sm:p-8">
+          <ShieldAlert className="size-6 text-destructive" strokeWidth={1.75} aria-hidden="true" />
+          <h1 className="mt-4 font-display text-2xl text-foreground">This link can&apos;t be used</h1>
+          <p className="mt-2 text-sm font-medium text-destructive">{tamperError}</p>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            For security reasons, payments cannot be processed through modified or corrupted links. Please contact the
+            seller for a valid link.
+          </p>
+          <Button asChild variant="outline" className="mt-6 w-full">
+            <Link href="/">Return to marketplace</Link>
+          </Button>
+        </div>
+      ) : isValid ? (
+        <PaymentCard
+          title={title!}
+          price={numPrice}
+          priceInPaise={priceInPaise}
+          currency={currency}
+          description={description}
+          redirectUrl={redirectUrl!}
+        />
+      ) : (
+        <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 sm:p-8">
+          <CircleAlert className="size-6 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+          <h1 className="mt-4 font-display text-2xl text-foreground">Incomplete payment link</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            To create an instant secure payment link, provide an encoded{" "}
+            <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-foreground">data</code> token in
+            the URL.
+          </p>
+          <pre className="mt-4 overflow-x-auto rounded-[10px] bg-secondary p-3 font-mono text-xs text-muted-foreground">
+            /pay?data=eyJ0aXRsZSI6IlNlcnZpY2UiLCJwcmljZSI6NDk5...
+          </pre>
+          <div className="mt-6 flex flex-col gap-2">
+            <Button asChild>
+              <Link href="/docs/api/payment-links">
+                Read the payment link docs
+                <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
               </Link>
+            </Button>
+            <Button asChild variant="ghost">
+              <Link href="/">Return to marketplace</Link>
             </Button>
           </div>
         </div>
-      </header>
-
-      {/* Main Checkout Area */}
-      <main className="flex-1 flex items-center justify-center p-4 md:p-8 relative z-10">
-        {requiresKey && encodedToken ? (
-          <KeyUnlockCard token={encodedToken} initialError={userKey ? tamperError : null} />
-        ) : tamperError ? (
-          <div className="w-full max-w-md mx-auto p-8 rounded-3xl bg-card/90 border border-rose-500/40 backdrop-blur-xl shadow-2xl text-center space-y-5 animate-in fade-in zoom-in-95">
-            <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
-              <ShieldAlert className="w-7 h-7" />
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-xl font-black text-foreground">Tampered or Invalid Link</h2>
-              <p className="text-xs text-rose-500 font-semibold leading-relaxed">
-                {tamperError}
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed pt-1">
-                For security reasons, payments cannot be processed through modified or corrupted links. Please contact the seller for a valid link.
-              </p>
-            </div>
-
-            <div className="pt-2">
-              <Button asChild variant="outline" className="w-full rounded-xl text-xs font-bold">
-                <Link href="/">Return to Marketplace</Link>
-              </Button>
-            </div>
-          </div>
-        ) : isValid ? (
-          <PaymentCard
-            title={title!}
-            price={numPrice}
-            priceInPaise={priceInPaise}
-            currency={currency}
-            description={description}
-            redirectUrl={redirectUrl!}
-          />
-        ) : (
-          <div className="w-full max-w-md mx-auto p-8 rounded-3xl bg-card/80 border border-border/60 backdrop-blur-xl shadow-xl text-center space-y-5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-center justify-center mx-auto">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-xl font-black text-foreground">Incomplete Payment Data</h2>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                To create an instant secure payment link, provide an encoded <code className="bg-muted px-1.5 py-0.5 rounded text-foreground">data</code> token in the URL.
-              </p>
-            </div>
-
-            <div className="p-3 bg-muted/40 rounded-xl text-left font-mono text-[11px] text-muted-foreground break-all">
-              /pay?data=eyJ0aXRsZSI6IlNlcnZpY2UiLCJwcmljZSI6NDk5...
-            </div>
-
-            <div className="pt-2 flex flex-col gap-2">
-              <Button asChild className="w-full bg-[#1CB0F6] hover:bg-[#1CB0F6]/90 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-[0_3px_0_#1899D6]">
-                <Link href="/docs/api/payment-links">
-                  View Payment Link Documentation <Sparkles className="w-3.5 h-3.5 ml-1.5" />
-                </Link>
-              </Button>
-              <Button asChild variant="outline" className="w-full rounded-xl text-xs font-bold">
-                <Link href="/">Return to Marketplace</Link>
-              </Button>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Minimal Footer */}
-      <footer className="border-t border-border/40 py-4 text-center text-xs text-muted-foreground relative z-10">
-        <p>© {new Date().getFullYear()} ScriptlyStore. Cryptographically verified 256-bit checkout infrastructure.</p>
-      </footer>
-    </div>
+      )}
+    </PayShell>
   );
 }

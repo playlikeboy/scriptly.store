@@ -1,40 +1,47 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { db } from "@/db";
 import { categories, subcategories } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { isAdmin } from "@/lib/auth-utils";
+import { jsonError, jsonOk, requireAdmin } from "../../_lib/guard";
+
+const typeSchema = z.enum(["category", "subcategory"]);
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authorized = await isAdmin();
-  if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized: Admin access required." }, { status: 401 });
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const rawType = request.nextUrl.searchParams.get("type");
+  if (!rawType) {
+    return jsonError("Type query parameter is required.", 400);
+  }
+  const type = typeSchema.safeParse(rawType);
+  if (!type.success) {
+    return jsonError("Invalid type parameter.", 400);
   }
 
-  const { searchParams } = new URL(request.url);
-  const type = searchParams.get("type"); // 'category' or 'subcategory'
-
-  if (!type) {
-    return NextResponse.json({ error: "Type query parameter is required." }, { status: 400 });
+  const { id } = await params;
+  if (!id || id.length > 100) {
+    return jsonError("Invalid id.", 400);
   }
 
   try {
-    const { id } = await params;
+    const deleted =
+      type.data === "category"
+        ? await db.delete(categories).where(eq(categories.id, id)).returning({ id: categories.id })
+        : await db.delete(subcategories).where(eq(subcategories.id, id)).returning({ id: subcategories.id });
 
-    if (type === "category") {
-      await db.delete(categories).where(eq(categories.id, id));
-      return NextResponse.json({ success: true });
-    } else if (type === "subcategory") {
-      await db.delete(subcategories).where(eq(subcategories.id, id));
-      return NextResponse.json({ success: true });
-    } else {
-      return NextResponse.json({ error: "Invalid type parameter." }, { status: 400 });
+    if (deleted.length === 0) {
+      return jsonError(`${type.data === "category" ? "Category" : "Subcategory"} not found.`, 404);
     }
+    return jsonOk({});
   } catch (error) {
     console.error("DELETE admin category failed:", error);
-    return NextResponse.json({ error: "Server error deleting category or subcategory." }, { status: 500 });
+    return jsonError("Server error deleting category or subcategory.", 500);
   }
 }
+
 export const dynamic = "force-dynamic";

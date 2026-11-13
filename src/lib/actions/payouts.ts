@@ -24,14 +24,30 @@ export async function recordPayoutAction({
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  if (amountCents <= 0) {
+  // Amounts are integer minor units (see src/config/pricing.ts); int4 column.
+  if (
+    typeof amountCents !== "number" ||
+    !Number.isInteger(amountCents) ||
+    amountCents <= 0 ||
+    amountCents > 2_147_483_647
+  ) {
     throw new Error("Payout amount must be greater than zero.");
+  }
+  if (typeof userId !== "string" || !userId) {
+    throw new Error("Creator not found.");
   }
 
   // Verify creator exists
-  const creator = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
+  const [creator] = await db
+    .select({
+      id: users.id,
+      payoutMethod: users.payoutMethod,
+      paypalEmail: users.paypalEmail,
+      payoutDetails: users.payoutDetails,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
 
   if (!creator) {
     throw new Error("Creator not found.");
@@ -44,9 +60,9 @@ export async function recordPayoutAction({
     userId,
     amount: amountCents,
     status: "processed",
-    payoutMethod: payoutMethod || creator.payoutMethod || null,
-    paypalEmail: paypalEmail || creator.paypalEmail || null,
-    payoutDetails: payoutDetails || creator.payoutDetails || null,
+    payoutMethod: (payoutMethod || creator.payoutMethod || "").slice(0, 64) || null,
+    paypalEmail: (paypalEmail || creator.paypalEmail || "").slice(0, 254) || null,
+    payoutDetails: (payoutDetails || creator.payoutDetails || "").slice(0, 2000) || null,
     createdAt: new Date(),
   });
 

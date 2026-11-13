@@ -1,6 +1,6 @@
 # ScriptlyHQ — Coding Agent Skills & Operational Workflows
 
-This document outlines on-demand automated skills and operational scripts for developers and AI coding agents operating on the `SH20RAJ/scriptlyhq` codebase.
+This document outlines on-demand automated skills and operational scripts for developers and AI coding agents operating on the `playlikeboy/scriptly.store` codebase.
 
 ---
 
@@ -9,8 +9,8 @@ This document outlines on-demand automated skills and operational scripts for de
 Audit, optimize, and enhance digital product titles, categories, tags, and rich markdown descriptions in Neon PostgreSQL for search engine ranking (SEO) and marketplace conversion.
 
 ### Database Hooks
-- **Schema**: [schema.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/db/schema.ts) (`products`, `categories`, `subcategories` tables).
-- **Client**: Drizzle ORM client initialized in [index.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/db/index.ts).
+- **Schema**: [schema.ts](src/db/schema.ts) (`products`, `categories`, `subcategories` tables).
+- **Client**: Drizzle ORM client initialized in [index.ts](src/db/index.ts).
 
 ### Execution Sequence
 1. **Category Mapping**: Ensure the product maps cleanly to one of the 6 core categories:
@@ -26,7 +26,7 @@ Audit, optimize, and enhance digital product titles, categories, tags, and rich 
    - Key feature bullet points
    - Tech stack specifications
    - Getting started / file inclusions list
-4. **INR Pricing**: Ensure product price is an integer in paise (e.g. ₹999 = `99900`).
+4. **USD Pricing**: Ensure product price is an integer in US cents (e.g. $29 = `2900`).
 
 ---
 
@@ -35,7 +35,7 @@ Audit, optimize, and enhance digital product titles, categories, tags, and rich 
 Generate instant, zero-setup payment checkout links with Razorpay processing and post-payment redirection.
 
 ### Code Hook
-- **Encoder Function**: `encodePaymentLinkPayload` in [link-encoder.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/payments/link-encoder.ts).
+- **Encoder Function**: `encodePaymentLinkPayload` in [link-encoder.ts](src/lib/payments/link-encoder.ts).
 
 ### Usage Examples
 ```ts
@@ -87,4 +87,4 @@ bun run src/scripts/publish-to-blogger.ts --limit 2
 # Publish all pending products
 bun run src/scripts/publish-to-blogger.ts --all
 ```
-Reference documentation: [blogger-publish.md](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/skills/blogger-publish.md).
+Reference documentation: [blogger-publish.md](docs/skills/blogger-publish.md).

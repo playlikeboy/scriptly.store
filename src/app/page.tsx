@@ -1,130 +1,71 @@
-import { Metadata } from "next";
+import type { Metadata } from "next";
 import { getProductsAction, getCategoriesAction } from "@/lib/actions/products";
 import { siteConfig } from "@/config/site";
 import { BLOG_POSTS } from "@/lib/blog-data";
 
-// Modular Homepage Components
 import HeroSection from "@/components/home/HeroSection";
-import TrustStrip from "@/components/home/TrustStrip";
+import CategoryNav from "@/components/home/CategoryNav";
 import ProductDiscoverySection from "@/components/home/ProductDiscoverySection";
-import IntentSection from "@/components/home/IntentSection";
-import FeaturedCollections from "@/components/home/FeaturedCollections";
-import QualitySection from "@/components/home/QualitySection";
-import ProductExperienceSection from "@/components/home/ProductExperienceSection";
+import FreePicks from "@/components/home/FreePicks";
 import CreatorSection from "@/components/home/CreatorSection";
 import LearnSection from "@/components/home/LearnSection";
 import FinalCTA from "@/components/home/FinalCTA";
 
+const TITLE = `${siteConfig.name} — Production-Ready Code, Templates & Developer Tools`;
+const DESCRIPTION =
+  "Discover production-ready SaaS templates, developer tools, landing pages, scripts, UI kits, automation assets, and more. Build faster with ScriptlyStore.";
+
 export const metadata: Metadata = {
-  title: `${siteConfig.name} — Production-Ready Code, Templates & Developer Tools`,
-  description: "Discover production-ready SaaS templates, developer tools, landing pages, scripts, UI kits, automation assets, and more. Build faster with ScriptlyStore.",
+  title: { absolute: TITLE },
+  description: DESCRIPTION,
   alternates: {
     canonical: siteConfig.url,
   },
   openGraph: {
-    title: `${siteConfig.name} — Production-Ready Code, Templates & Developer Tools`,
-    description: "Discover production-ready SaaS templates, developer tools, landing pages, scripts, UI kits, automation assets, and more. Build faster with ScriptlyStore.",
+    title: TITLE,
+    description: DESCRIPTION,
     url: siteConfig.url,
     siteName: siteConfig.name,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: `${siteConfig.name} — Production-Ready Code, Templates & Developer Tools`,
-    description: "Discover production-ready SaaS templates, developer tools, landing pages, scripts, UI kits, automation assets, and more. Build faster with ScriptlyStore.",
+    title: TITLE,
+    description: DESCRIPTION,
   },
 };
 
+const HERO_COUNT = 3;
+const GRID_COUNT = 8;
+
 export default async function Page() {
-  // Parallel server-side data fetching
+  // All homepage data loads in one parallel round trip.
   const [featuredData, catalogData, freeData, categories] = await Promise.all([
-    getProductsAction({
-      featuredOnly: true,
-      limit: 12,
-      sortBy: "rating",
-    }),
-    getProductsAction({
-      limit: 20,
-      sortBy: "newest",
-    }),
-    getProductsAction({
-      priceType: "free",
-      limit: 6,
-      sortBy: "rating",
-    }),
+    getProductsAction({ featuredOnly: true, limit: HERO_COUNT, sortBy: "rating" }),
+    getProductsAction({ limit: GRID_COUNT + HERO_COUNT, sortBy: "newest" }),
+    getProductsAction({ priceType: "free", limit: 6, sortBy: "rating" }),
     getCategoriesAction(),
   ]);
 
-  // Ensure high quality fallback for hero display if catalog has few featured items
-  const heroProducts = featuredData.products.length > 0
-    ? featuredData.products
-    : catalogData.products.slice(0, 3);
+  // Lead with featured products; fall back to the newest releases.
+  const heroProducts =
+    featuredData.products.length > 0
+      ? featuredData.products
+      : catalogData.products.slice(0, HERO_COUNT);
 
-  const weekendProducts = freeData.products.length > 0
-    ? freeData.products
-    : catalogData.products.filter((p) => p.isFree || p.price === 0).slice(0, 3);
-
-  // Combine featured and catalog products for interactive discovery filtering
-  const discoveryMap = new Map();
-  featuredData.products.forEach((p) => discoveryMap.set(p.id, p));
-  catalogData.products.forEach((p) => discoveryMap.set(p.id, p));
-  const discoveryProducts = Array.from(discoveryMap.values());
+  // Newest releases, minus anything already shown in the hero.
+  const heroIds = new Set(heroProducts.map((p) => p.id));
+  const latestProducts = catalogData.products.filter((p) => !heroIds.has(p.id)).slice(0, GRID_COUNT);
 
   return (
-    <div className="flex flex-col min-h-screen">
-      {/* Schema.org WebSite Structured Data */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "WebSite",
-            "name": siteConfig.name,
-            "url": siteConfig.url,
-            "description": siteConfig.description,
-            "potentialAction": {
-              "@type": "SearchAction",
-              "target": `${siteConfig.url}/search?search={search_term_string}`,
-              "query-input": "required name=search_term_string",
-            },
-          }),
-        }}
-      />
-
-      {/* 1. HERO SECTION */}
-      <HeroSection featuredProducts={heroProducts} />
-
-      {/* 2. TRUST STRIP / TECH STACK */}
-      <TrustStrip />
-
-      {/* 3. CORE PRODUCT DISCOVERY */}
-      <ProductDiscoverySection
-        products={discoveryProducts}
-        categories={categories}
-      />
-
-      {/* 4. INTENT-BASED DISCOVERY ("What are you building?") */}
-      <IntentSection />
-
-      {/* 5. CURATED COLLECTIONS */}
-      <FeaturedCollections
-        featuredProducts={heroProducts}
-        freeProducts={weekendProducts}
-      />
-
-      {/* 6. PRODUCT QUALITY SYSTEM */}
-      <QualitySection />
-
-      {/* 7. PRODUCT EXPERIENCE WALKTHROUGH */}
-      <ProductExperienceSection />
-
-      {/* 8. CREATOR ACQUISITION & 5-STEP WORKFLOW */}
+    <div className="flex flex-col">
+      {/* WebSite JSON-LD is emitted once by the root layout. */}
+      <HeroSection featuredProducts={heroProducts} categories={categories} />
+      <CategoryNav categories={categories} />
+      <ProductDiscoverySection products={latestProducts} categories={categories} />
+      <FreePicks products={freeData.products} categories={categories} />
       <CreatorSection />
-
-      {/* 9. EDITORIAL / LEARN */}
       <LearnSection posts={BLOG_POSTS} />
-
-      {/* 10. FINAL RESTRAINED SPLIT CTA */}
       <FinalCTA />
     </div>
   );

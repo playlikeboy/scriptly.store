@@ -1,9 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
-import { getOrCreateDbUser } from "@/lib/auth-utils";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ArrowUpRight } from "lucide-react";
+import { getOrCreateDbUser } from "@/lib/auth-utils";
 import StoreNameEditor from "@/components/StoreNameEditor";
+import { PageHeader } from "@/components/creator/console-ui";
 
 export const metadata: Metadata = {
   title: "Store Branding | Creator Console",
@@ -13,24 +16,31 @@ export const metadata: Metadata = {
 export default async function CreatorStorePage() {
   const user = await getOrCreateDbUser();
   if (!user) {
-    redirect("/handler/sign-in?redirectTo=/creator/dashboard");
+    redirect("/handler/sign-in?redirectTo=/creator/store");
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="border-b border-border/40 pb-5">
-        <h1 className="text-2xl font-black tracking-tight text-foreground">
-          Storefront Branding
-        </h1>
-        <p className="text-xs text-muted-foreground mt-1">
-          Customize your public store name and developer identity on the marketplace.
-        </p>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Storefront"
+        description="How your store appears to buyers across the marketplace."
+      />
 
-      {/* Editor Card */}
-      <div className="max-w-xl">
+      <div className="max-w-xl space-y-4">
         <StoreNameEditor initialStoreName={user.storeName} />
+        <p className="text-sm text-muted-foreground">
+          Your public store lives at{" "}
+          <Link
+            href={`/stores/${user.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-primary underline-offset-4 hover:underline"
+          >
+            <span className="font-mono text-xs break-all">/stores/{user.id}</span>
+            <ArrowUpRight className="size-3.5 shrink-0" strokeWidth={1.75} />
+            <span className="sr-only">(opens in a new tab)</span>
+          </Link>
+        </p>
       </div>
     </div>
   );

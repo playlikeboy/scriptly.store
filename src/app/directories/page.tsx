@@ -1,10 +1,8 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { ArrowUpRight, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Search, Compass, ExternalLink, ArrowRight } from "lucide-react";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import { getDirectories, safeExternalUrl, slugify } from "./_lib/directories";
 
 export const dynamic = "force-dynamic";
 
@@ -16,168 +14,161 @@ export const metadata: Metadata = {
   },
 };
 
-interface Directory {
-  id: number;
-  name: string;
-  description: string;
-  submission_link: string;
-}
-
 interface PageProps {
   searchParams: Promise<{
     search?: string;
   }>;
 }
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-}
-
 export default async function DirectoriesPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
-  const searchQuery = resolvedParams.search || "";
+  const searchQuery = (resolvedParams.search || "").trim();
+  const q = searchQuery.toLowerCase();
 
-  // Fetch awesome saas directories list from SSR via jsDelivr CDN
-  const res = await fetch("https://cdn.jsdelivr.net/gh/theshubh77/awesome-saas-directories@master/launchdb.json", {
-    next: { revalidate: 86400 } // Cache for 24 hours
-  });
-  const directories: Directory[] = await res.json();
+  const directories = await getDirectories();
+  const all = directories ?? [];
 
-  // Filter items if search query is provided
-  const filtered = directories.filter(dir => 
-    dir.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    dir.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filtered = q
+    ? all.filter((dir) => dir.name.toLowerCase().includes(q) || dir.description.toLowerCase().includes(q))
+    : all;
 
   const itemListSchema = {
     "@context": "https://schema.org",
     "@type": "ItemList",
     "name": "Awesome SaaS Launch Directories",
     "description": "A curated directory of places to launch your SaaS and boost SEO.",
-    "numberOfItems": directories.length,
-    "itemListElement": directories.slice(0, 50).map((dir, index) => ({
+    "numberOfItems": all.length,
+    "itemListElement": all.slice(0, 50).map((dir, index) => ({
       "@type": "ListItem",
       "position": index + 1,
       "url": `https://scriptly.store/directories/${slugify(dir.name)}`,
       "name": dir.name,
-      "description": dir.description
-    }))
+      "description": dir.description,
+    })),
   };
 
   return (
-    <div className="flex flex-col min-h-screen text-foreground relative bg-background">
-      <CyberBackground />
-      
-      {/* Schema.org Script injection */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListSchema) }}
-      />
+    <div className="bg-background text-foreground">
+      {all.length > 0 && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListSchema) }}
+        />
+      )}
 
-      <div className="container max-w-7xl mx-auto px-4 py-16 md:py-24 space-y-16 relative z-10">
-        
-        {/* Header */}
-        <div className="text-center space-y-4 max-w-3xl mx-auto">
-          <Badge variant="outline" className="rounded-full px-3 py-1 text-[10px] uppercase font-black tracking-[0.2em] border-[#1CB0F6]/20 text-[#1CB0F6] bg-[#1CB0F6]/5 animate-pulse">
-             SEO Booster Registry
-          </Badge>
-          <h1 className="text-4xl md:text-6xl font-black tracking-tighter text-foreground sm:leading-[1.1]">
-            Awesome SaaS Directories <br />
-            <span className="bg-gradient-to-r from-primary via-[#1CB0F6] to-[#CE82FF] bg-clip-text text-transparent">Launch & SEO Backlinks</span>
+      <div className="mx-auto w-full max-w-5xl px-4 py-12 sm:px-6 md:py-16 lg:px-8">
+        <header className="max-w-2xl">
+          <h1 className="font-display text-3xl leading-tight tracking-[-0.02em] text-balance md:text-4xl">
+            SaaS launch directories
           </h1>
-          <p className="text-base text-muted-foreground font-medium leading-relaxed max-w-2xl mx-auto">
-            Submit your startup to 150+ high-authority platforms to gain early adopters, build authoritative backlinks, and improve domain ranking.
+          <p className="mt-3 text-base leading-relaxed text-muted-foreground">
+            Submit your startup to{" "}
+            {all.length > 0 ? <span className="tabular-nums">{all.length.toLocaleString("en-IN")}</span> : "dozens of"}{" "}
+            launch platforms to gain early adopters, build backlinks, and improve domain ranking.
           </p>
-        </div>
+        </header>
 
-        {/* Server-Side Search Filter */}
-        <div className="max-w-md mx-auto w-full">
-          <form method="GET" action="/directories" className="relative group">
+        <form method="GET" action="/directories" role="search" className="mt-8 flex max-w-lg items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <label htmlFor="directory-search" className="sr-only">
+              Search directories
+            </label>
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+              strokeWidth={1.75}
+              aria-hidden="true"
+            />
             <input
-              type="text"
+              id="directory-search"
+              type="search"
               name="search"
               defaultValue={searchQuery}
-              placeholder="Search directories by name or description..."
-              className="w-full pl-12 pr-28 py-3 text-xs font-semibold rounded-2xl border-2 border-border bg-card/60 backdrop-blur-md text-foreground placeholder:text-muted-foreground focus:outline-none transition-all shadow-[0_4px_0_var(--border)] dark:shadow-[0_4px_0_#2A3842]"
+              placeholder="Search by name or description"
+              className="h-10 w-full min-w-0 rounded-[10px] border border-input bg-card pl-9 pr-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:border-foreground/25 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
             />
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <button
-              type="submit"
-              className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-1.5 text-[9px] font-black uppercase bg-[#1CB0F6] text-white rounded-xl shadow-[0_3px_0_#1899D6] hover:brightness-105 active:translate-y-[1px] active:shadow-none transition-all"
+          </div>
+          <Button type="submit" className="shrink-0">
+            Search
+          </Button>
+        </form>
+
+        <div className="mt-8 flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-3">
+          <p className="text-sm tabular-nums text-muted-foreground" aria-live="polite">
+            {searchQuery
+              ? `${filtered.length} of ${all.length} directories match “${searchQuery}”`
+              : `${all.length} directories`}
+          </p>
+          {searchQuery && (
+            <Link
+              href="/directories"
+              className="rounded-sm text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Search
-            </button>
-          </form>
-        </div>
-
-        {/* Directories Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-          {filtered.length === 0 ? (
-            <div className="col-span-full text-center py-20 border border-dashed border-border rounded-[2.5rem] bg-card/10 space-y-4">
-              <Compass className="w-10 h-10 text-muted-foreground mx-auto" />
-              <p className="text-sm font-bold text-muted-foreground">No directories match your query.</p>
-              <Button asChild variant="outline" size="sm">
-                <Link href="/directories">Reset Search</Link>
-              </Button>
-            </div>
-          ) : (
-            filtered.map((dir) => {
-              const slug = slugify(dir.name);
-              return (
-                <Card 
-                  key={dir.id}
-                  className="border-2 border-border bg-card/45 backdrop-blur-sm shadow-[0_4px_0_var(--border)] dark:shadow-[0_4px_0_#2A3842] hover:translate-y-[-4px] hover:shadow-[0_8px_0_var(--border)] transition-all duration-300 rounded-[2rem] flex flex-col justify-between overflow-hidden group"
-                >
-                  <CardContent className="p-6 sm:p-8 flex flex-col justify-between h-full space-y-6">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Badge className="bg-primary/10 text-primary border-primary/20 text-[8px] uppercase tracking-wider font-bold">
-                           Directory #{dir.id}
-                        </Badge>
-                        <a 
-                          href={dir.submission_link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-muted-foreground hover:text-[#1CB0F6] transition-colors"
-                          title="Direct Submission Link"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                      <h3 className="text-lg font-black text-foreground group-hover:text-[#1CB0F6] transition-colors line-clamp-1">
-                        {dir.name}
-                      </h3>
-                      <p className="text-xs text-muted-foreground leading-relaxed font-semibold line-clamp-3">
-                        {dir.description}
-                      </p>
-                    </div>
-
-                    <div className="pt-4 border-t border-border/40 flex items-center justify-between">
-                      <a 
-                        href={dir.submission_link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[9px] font-black uppercase text-[#1CB0F6] hover:underline flex items-center gap-1"
-                      >
-                        Submit Tool <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <Button asChild size="sm" variant="secondary" className="rounded-xl h-8 px-4 font-bold text-[9px] uppercase tracking-wider">
-                        <Link href={`/directories/${slug}`} className="flex items-center gap-1">
-                          SEO Insights
-                          <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                        </Link>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
+              Clear search
+            </Link>
           )}
         </div>
 
+        {directories === null ? (
+          <div className="mt-8 rounded-2xl bg-secondary/60 px-6 py-10" role="alert">
+            <p className="text-base font-medium">The directory list could not be loaded</p>
+            <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+              The registry source did not respond. Reload the page in a moment.
+            </p>
+            <Button asChild variant="outline" className="mt-5">
+              <Link href="/directories">Try again</Link>
+            </Button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="mt-8 rounded-2xl bg-secondary/60 px-6 py-10">
+            <p className="text-base font-medium">No directories match your search</p>
+            <p className="mt-2 text-sm text-muted-foreground">Try a shorter or different keyword.</p>
+            <Button asChild variant="outline" className="mt-5">
+              <Link href="/directories">Reset search</Link>
+            </Button>
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {filtered.map((dir) => {
+              const slug = slugify(dir.name);
+              const submitUrl = safeExternalUrl(dir.submission_link);
+              return (
+                <li key={`${dir.id}-${slug}`} className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:gap-6">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-medium leading-snug">
+                      <Link
+                        href={`/directories/${slug}`}
+                        className="rounded-sm text-foreground transition-colors duration-150 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {dir.name}
+                      </Link>
+                    </h2>
+                    {dir.description && (
+                      <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                        {dir.description}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button asChild variant="ghost" size="sm">
+                      <Link href={`/directories/${slug}`} aria-label={`Submission guide for ${dir.name}`}>
+                        Guide
+                      </Link>
+                    </Button>
+                    {submitUrl && (
+                      <Button asChild variant="outline" size="sm">
+                        <a href={submitUrl} target="_blank" rel="noopener noreferrer">
+                          Submit
+                          <ArrowUpRight className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                          <span className="sr-only"> to {dir.name} (opens in a new tab)</span>
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );

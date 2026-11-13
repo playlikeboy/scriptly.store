@@ -1,5 +1,16 @@
 name: Deploy to Cloudflare
-# Production deploy keeps Cloudflare runtime secrets synchronized with GitHub Actions.
+# Production deploy: validates secrets, syncs runtime secrets to the Worker,
+# typechecks, then builds with OpenNext and deploys.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, DATABASE_URL,
+#   NEXT_PUBLIC_HEXCLAVE_PROJECT_ID, NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY,
+#   HEXCLAVE_SECRET_SERVER_KEY
+# Optional runtime secrets (synced to Cloudflare only when set, never blanked):
+#   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
+#   PAYMENT_LINK_SECRET, AGENT_API_KEY, ADMIN_EMAILS,
+#   GH_PAT, GH_REPO_OWNER, GH_REPO_NAME (synced as GITHUB_PAT/_REPO_OWNER/_REPO_NAME),
+#   CF_EMAIL_WORKER_URL, CF_EMAIL_API_TOKEN, TO_EMAIL
 
 on:
   push:
@@ -7,61 +18,86 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NEXT_PUBLIC_HEXCLAVE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PROJECT_ID }}
+      NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY }}
+      HEXCLAVE_SECRET_SERVER_KEY: ${{ secrets.HEXCLAVE_SECRET_SERVER_KEY }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Validate required secrets
+        run: |
+          missing=()
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN DATABASE_URL \
+                      NEXT_PUBLIC_HEXCLAVE_PROJECT_ID NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY \
+                      HEXCLAVE_SECRET_SERVER_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing secret::${name} is not set in repository Actions secrets"
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing ${#missing[@]} required secret(s): ${missing[*]}"
+            echo "Add them under Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install Dependencies
-        run: bun install
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Validate deploy and runtime secrets
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEXT_PUBLIC_HEXCLAVE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PROJECT_ID }}
-          NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY }}
-          HEXCLAVE_SECRET_SERVER_KEY: ${{ secrets.HEXCLAVE_SECRET_SERVER_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          test -n "$NEXT_PUBLIC_HEXCLAVE_PROJECT_ID"
-          test -n "$NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY"
-          test -n "$HEXCLAVE_SECRET_SERVER_KEY"
-          test -n "$DATABASE_URL"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$CLOUDFLARE_API_TOKEN"
+      - name: Typecheck
+        run: bunx tsc --noEmit -p .
 
       - name: Sync runtime secrets to Cloudflare
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEXT_PUBLIC_HEXCLAVE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PROJECT_ID }}
-          NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY }}
-          HEXCLAVE_SECRET_SERVER_KEY: ${{ secrets.HEXCLAVE_SECRET_SERVER_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          PAYMENT_LINK_SECRET: ${{ secrets.PAYMENT_LINK_SECRET }}
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          GITHUB_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_REPO_OWNER: ${{ secrets.GH_REPO_OWNER }}
+          GITHUB_REPO_NAME: ${{ secrets.GH_REPO_NAME }}
+          CF_EMAIL_WORKER_URL: ${{ secrets.CF_EMAIL_WORKER_URL }}
+          CF_EMAIL_API_TOKEN: ${{ secrets.CF_EMAIL_API_TOKEN }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
         run: |
           set -euo pipefail
-          bun -e 'process.stdout.write(JSON.stringify({
-            NEXT_PUBLIC_HEXCLAVE_PROJECT_ID: process.env.NEXT_PUBLIC_HEXCLAVE_PROJECT_ID,
-            NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY: process.env.NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY,
-            HEXCLAVE_SECRET_SERVER_KEY: process.env.HEXCLAVE_SECRET_SERVER_KEY,
-            DATABASE_URL: process.env.DATABASE_URL
-          }))' | bunx wrangler secret bulk
+          bun -e '
+            const keys = [
+              "DATABASE_URL", "NEXT_PUBLIC_HEXCLAVE_PROJECT_ID",
+              "NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY", "HEXCLAVE_SECRET_SERVER_KEY",
+              "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
+              "PAYMENT_LINK_SECRET", "AGENT_API_KEY", "ADMIN_EMAILS",
+              "GITHUB_PAT", "GITHUB_REPO_OWNER", "GITHUB_REPO_NAME",
+              "CF_EMAIL_WORKER_URL", "CF_EMAIL_API_TOKEN", "TO_EMAIL",
+            ];
+            const out = {};
+            for (const k of keys) if (process.env[k]) out[k] = process.env[k];
+            console.error("Syncing: " + Object.keys(out).join(", "));
+            process.stdout.write(JSON.stringify(out));
+          ' | bunx wrangler secret bulk
 
-      - name: Build and Deploy
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEXT_PUBLIC_HEXCLAVE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PROJECT_ID }}
-          NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY }}
-          HEXCLAVE_SECRET_SERVER_KEY: ${{ secrets.HEXCLAVE_SECRET_SERVER_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Build and deploy
         run: bun run deploy

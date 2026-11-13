@@ -1,253 +1,222 @@
-"use client";
-
-import { useState, useTransition, useEffect } from "react";
 import Link from "next/link";
-import { Edit2, Eye, Trash2, Search, Filter, Loader2, AlertCircle, CheckCircle2, Clock, XCircle } from "lucide-react";
-import { deleteProductAction } from "@/lib/actions/products";
-import { toast } from "sonner";
+import { ChevronLeft, ChevronRight, ExternalLink, Pencil } from "lucide-react";
+import { formatPrice } from "@/lib/price-utils";
+import { Button } from "@/components/ui/button";
+import DeleteProductButton from "@/components/creator/DeleteProductButton";
+import {
+  EmptyState,
+  StatusPill,
+  formatDate,
+  tableCellClass,
+  tableHeadClass,
+} from "@/components/creator/console-ui";
 
-interface CreatorProduct {
+export interface CreatorProductRow {
   id: string;
   title: string;
   slug: string;
   category: string;
-  subcategory: string | null;
+  thumbnail: string | null;
   price: number;
+  isFree: boolean;
   status: string | null;
   published: boolean;
   createdAt: Date;
 }
 
-interface CreatorProductsTableProps {
-  products: CreatorProduct[];
+interface Pagination {
+  page: number;
+  totalPages: number;
+  total: number;
+  pageSize: number;
+  prevHref: string | null;
+  nextHref: string | null;
 }
 
-const formatINR = (val: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(val);
+function StatusCell({ status, published }: { status: string | null; published: boolean }) {
+  if (status === "approved") {
+    return published ? <StatusPill tone="success">Live</StatusPill> : <StatusPill>Unlisted</StatusPill>;
+  }
+  if (status === "rejected") return <StatusPill tone="destructive">Rejected</StatusPill>;
+  return <StatusPill>In review</StatusPill>;
+}
 
-export default function CreatorProductsTable({ products }: CreatorProductsTableProps) {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [isPending, startTransition] = useTransition();
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+function Thumb({ src, title }: { src: string | null; title: string }) {
+  if (!src) {
+    return (
+      <span
+        aria-hidden
+        className="flex h-10 w-16 shrink-0 items-center justify-center rounded-lg bg-secondary text-xs font-medium text-muted-foreground"
+      >
+        {title.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+     
+    <img
+      src={src}
+      alt=""
+      width={64}
+      height={40}
+      loading="lazy"
+      decoding="async"
+      className="h-10 w-16 shrink-0 rounded-lg bg-secondary object-cover"
+    />
+  );
+}
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [search, statusFilter]);
-
-  const handleDelete = (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to delete "${title}"?`)) return;
-
-    setDeletingId(id);
-    startTransition(async () => {
-      try {
-        const res = await deleteProductAction(id);
-        if (res.success) {
-          toast.success("Script deleted successfully.");
-        } else {
-          toast.error("Failed to delete script.");
+export default function CreatorProductsTable({
+  products,
+  pagination,
+  hasAnyProducts,
+  isFiltered,
+}: {
+  products: CreatorProductRow[];
+  pagination: Pagination;
+  hasAnyProducts: boolean;
+  isFiltered: boolean;
+}) {
+  if (products.length === 0) {
+    return hasAnyProducts && isFiltered ? (
+      <EmptyState
+        title="No products match these filters"
+        description="Try a different search term or status."
+        action={
+          <Button asChild variant="outline" size="sm">
+            <Link href="/creator/products">Clear filters</Link>
+          </Button>
         }
-      } catch (err: any) {
-        toast.error(err.message || "Failed to delete script.");
-      } finally {
-        setDeletingId(null);
-      }
-    });
-  };
+      />
+    ) : (
+      <EmptyState
+        title="You haven’t listed anything yet"
+        description="Package a script, template or kit and submit it. Every listing is reviewed before it goes live."
+        action={
+          <Button asChild size="sm">
+            <Link href="/creator/new">New product</Link>
+          </Button>
+        }
+      />
+    );
+  }
 
-  const filteredProducts = products.filter((p) => {
-    const term = search.toLowerCase();
-    const titleMatch = p.title.toLowerCase().includes(term) || p.slug.toLowerCase().includes(term);
-    const statusVal = p.status || "pending";
-    const statusMatch = statusFilter === "all" || statusVal === statusFilter;
-    return titleMatch && statusMatch;
-  });
-
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-  const displayPage = Math.min(currentPage, Math.max(1, totalPages));
-  const startIndex = (displayPage - 1) * itemsPerPage;
-  const paginatedProducts = filteredProducts.slice(startIndex, startIndex + itemsPerPage);
-
-  const getStatusBadge = (status: string | null) => {
-    const val = status || "pending";
-    switch (val) {
-      case "approved":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="w-3 h-3" />
-            Active
-          </span>
-        );
-      case "rejected":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-500/10 text-rose-600 dark:text-rose-400">
-            <XCircle className="w-3 h-3" />
-            Rejected
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400">
-            <Clock className="w-3 h-3" />
-            Reviewing
-          </span>
-        );
-    }
-  };
+  const from = (pagination.page - 1) * pagination.pageSize + 1;
+  const to = Math.min(pagination.page * pagination.pageSize, pagination.total);
 
   return (
-    <div className="space-y-4">
-      {/* Search & Filter Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border-b border-border/40">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search scripts..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl border border-border/60 bg-background/50 text-foreground placeholder:text-muted-foreground text-xs focus:outline-none focus:border-primary/50 transition-colors font-medium"
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs focus:outline-none focus:border-primary/50 cursor-pointer font-medium"
-          >
-            <option value="all">All Statuses</option>
-            <option value="approved">Approved / Active</option>
-            <option value="pending">Pending Review</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Catalog Table */}
-      {filteredProducts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center space-y-2 p-4">
-          <AlertCircle className="w-8 h-8 text-muted-foreground/40" />
-          <div className="space-y-1">
-            <p className="text-xs font-bold text-foreground">No scripts found</p>
-            <p className="text-[11px] text-muted-foreground">Try adjusting your search filters or list a new script.</p>
-          </div>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-border/40 bg-muted/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                <th className="py-3 px-5">Script Details</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4">Price</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/30 text-xs">
-              {paginatedProducts.map((p) => (
-                <tr key={p.id} className="hover:bg-muted/15 transition-colors">
-                  <td className="py-3.5 px-5">
-                    <div className="space-y-0.5">
-                      <Link
-                        href={`/products/${p.slug}`}
-                        className="font-bold text-foreground hover:text-primary transition-colors text-xs line-clamp-1"
-                      >
-                        {p.title}
-                      </Link>
-                      <p className="text-[10px] text-muted-foreground font-mono">/{p.slug}</p>
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[680px] border-collapse text-sm">
+          <thead className="border-b border-border bg-secondary/40">
+            <tr>
+              <th scope="col" className={tableHeadClass}>Product</th>
+              <th scope="col" className={tableHeadClass}>Category</th>
+              <th scope="col" className={`${tableHeadClass} text-right`}>Price</th>
+              <th scope="col" className={tableHeadClass}>Status</th>
+              <th scope="col" className={`${tableHeadClass} text-right`}>
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {products.map((p) => {
+              const free = p.isFree || p.price <= 0;
+              return (
+                <tr key={p.id} className="transition-colors hover:bg-secondary/40">
+                  <td className={tableCellClass}>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Thumb src={p.thumbnail} title={p.title} />
+                      <div className="min-w-0">
+                        <Link
+                          href={`/creator/${p.id}/edit`}
+                          className="block max-w-[22rem] truncate font-medium text-foreground underline-offset-4 hover:underline"
+                        >
+                          {p.title}
+                        </Link>
+                        <p className="truncate text-xs text-muted-foreground">
+                          <span className="font-mono">/{p.slug}</span> · {formatDate(p.createdAt)}
+                        </p>
+                      </div>
                     </div>
                   </td>
-                  <td className="py-3.5 px-4">
-                    <span className="px-2 py-0.5 rounded bg-muted/40 text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                      {p.category}
-                    </span>
+                  <td className={`${tableCellClass} text-muted-foreground capitalize whitespace-nowrap`}>
+                    {p.category}
                   </td>
-                  <td className="py-3.5 px-4 font-mono font-bold text-foreground">
-                    {formatINR(p.price / 100)}
+                  <td
+                    className={`${tableCellClass} tabular text-right font-medium whitespace-nowrap ${
+                      free ? "text-success" : "text-foreground"
+                    }`}
+                  >
+                    {free ? "Free" : formatPrice(p.price)}
                   </td>
-                  <td className="py-3.5 px-4">
-                    {getStatusBadge(p.status)}
+                  <td className={tableCellClass}>
+                    <StatusCell status={p.status} published={p.published} />
                   </td>
-                  <td className="py-3.5 px-5 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Link
-                        href={`/products/${p.slug}`}
-                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-lg transition-colors"
-                        title="View Public Page"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                      </Link>
-                      <Link
-                        href={`/creator/${p.id}/edit`}
-                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-lg transition-colors"
-                        title="Edit Details"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Link>
-                      <button
-                        type="button"
-                        disabled={deletingId === p.id}
-                        onClick={() => handleDelete(p.id, p.title)}
-                        className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                        title="Delete Script"
-                      >
-                        {deletingId === p.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
-                        )}
-                      </button>
+                  <td className={tableCellClass}>
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button asChild variant="ghost" size="icon-sm">
+                        <Link
+                          href={`/products/${p.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`View public page for ${p.title} (opens in a new tab)`}
+                        >
+                          <ExternalLink strokeWidth={1.75} />
+                        </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="icon-sm">
+                        <Link href={`/creator/${p.id}/edit`} aria-label={`Edit ${p.title}`}>
+                          <Pencil strokeWidth={1.75} />
+                        </Link>
+                      </Button>
+                      <DeleteProductButton id={p.id} title={p.title} />
                     </div>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-      {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3 border-t border-border/40 text-xs text-muted-foreground">
-          <div className="text-[11px]">
-            Showing <strong className="text-foreground">{startIndex + 1}</strong>–
-            <strong className="text-foreground">
-              {Math.min(startIndex + itemsPerPage, filteredProducts.length)}
-            </strong>{" "}
-            of <strong className="text-foreground">{filteredProducts.length}</strong> scripts
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={displayPage === 1}
-              onClick={() => setCurrentPage((p) => p - 1)}
-              className="px-2.5 py-1 rounded-lg border border-border/60 bg-card/40 text-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted/40 transition-colors cursor-pointer"
-            >
-              Prev
-            </button>
-            <span className="text-[11px] px-2 font-mono">
-              {displayPage} / {totalPages}
+      <nav
+        aria-label="Product pages"
+        className="flex flex-col items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:px-5"
+      >
+        <p className="tabular">
+          {from}–{to} of {pagination.total.toLocaleString("en-IN")}
+        </p>
+        {pagination.totalPages > 1 ? (
+          <div className="flex items-center gap-2">
+            {pagination.prevHref ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href={pagination.prevHref} rel="prev">
+                  <ChevronLeft strokeWidth={1.75} /> Previous
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled>
+                <ChevronLeft strokeWidth={1.75} /> Previous
+              </Button>
+            )}
+            <span className="tabular px-1">
+              {pagination.page} / {pagination.totalPages}
             </span>
-            <button
-              type="button"
-              disabled={displayPage === totalPages}
-              onClick={() => setCurrentPage((p) => p + 1)}
-              className="px-2.5 py-1 rounded-lg border border-border/60 bg-card/40 text-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted/40 transition-colors cursor-pointer"
-            >
-              Next
-            </button>
+            {pagination.nextHref ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href={pagination.nextHref} rel="next">
+                  Next <ChevronRight strokeWidth={1.75} />
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled>
+                Next <ChevronRight strokeWidth={1.75} />
+              </Button>
+            )}
           </div>
-        </div>
-      )}
-    </div>
+        ) : null}
+      </nav>
+    </>
   );
 }

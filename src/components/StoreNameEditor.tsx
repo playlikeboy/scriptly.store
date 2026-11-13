@@ -1,78 +1,101 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateCreatorStoreNameAction } from "@/lib/actions/creator";
+import { useRouter } from "next/navigation";
+import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Store, Loader2, Save } from "lucide-react";
+import { updateCreatorStoreNameAction } from "@/lib/actions/creator";
+import { Button } from "@/components/ui/button";
+import { Panel, errorTextClass, fieldClass, hintClass, labelClass } from "@/components/creator/console-ui";
+
+const MAX = 50;
 
 interface StoreNameEditorProps {
   initialStoreName: string | null;
 }
 
 export default function StoreNameEditor({ initialStoreName }: StoreNameEditorProps) {
+  const router = useRouter();
+  const [saved, setSaved] = useState(initialStoreName || "");
   const [storeName, setStoreName] = useState(initialStoreName || "");
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const trimmed = storeName.trim();
+  const tooLong = trimmed.length > MAX;
+  const dirty = trimmed !== saved.trim();
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (tooLong) {
+      setError(`Keep it under ${MAX} characters.`);
+      return;
+    }
+    setError(null);
     startTransition(async () => {
       try {
-        const res = await updateCreatorStoreNameAction(storeName);
-        if (res.success) {
-          toast.success("Store name updated successfully!");
+        const res = await updateCreatorStoreNameAction(trimmed);
+        if (res?.success) {
+          setSaved(trimmed);
+          toast.success(trimmed ? "Store name saved." : "Store name cleared.");
+          router.refresh();
         } else {
-          toast.error("Failed to update store name.");
+          setError("Could not save your store name. Try again.");
         }
-      } catch (err: any) {
-        toast.error(err.message || "Something went wrong.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save your store name. Try again.");
       }
     });
   };
 
   return (
-    <form
-      onSubmit={handleSave}
-      className="p-6 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md shadow-sm space-y-5"
-    >
-      <div className="flex items-center gap-2.5 pb-4 border-b border-border/40">
-        <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-          <Store className="w-4 h-4" />
-        </div>
-        <div>
-          <h3 className="text-sm font-black text-foreground">Store Identity</h3>
-          <p className="text-[11px] text-muted-foreground">Public storefront brand name</p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-          Public Store Name
-        </label>
-        <div className="flex flex-col sm:flex-row gap-2.5">
+    <Panel title="Store name" description="Shown on your product pages and public creator profile.">
+      <form onSubmit={handleSave} className="space-y-4 p-4 sm:p-5">
+        <div className="space-y-1.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <label htmlFor="store-name" className={labelClass}>
+              Public store name
+            </label>
+            <span className={`tabular text-xs ${tooLong ? "text-destructive" : "text-muted-foreground"}`}>
+              {trimmed.length}/{MAX}
+            </span>
+          </div>
           <input
+            id="store-name"
             type="text"
             value={storeName}
-            onChange={(e) => setStoreName(e.target.value)}
-            placeholder="e.g. Acme Studio, DevLabs, Nova Scripts"
-            className="flex-1 px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs focus:outline-none focus:border-primary/50 transition-colors font-medium placeholder:text-muted-foreground/60"
+            onChange={(e) => {
+              setStoreName(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="e.g. Acme Studio"
+            autoComplete="organization"
+            aria-invalid={tooLong || Boolean(error)}
+            aria-describedby={error ? "store-name-error" : "store-name-hint"}
+            className={fieldClass}
           />
-          <button
-            type="submit"
-            disabled={isPending}
-            className="inline-flex items-center justify-center px-5 py-2.5 bg-primary text-primary-foreground hover:brightness-105 disabled:opacity-50 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer gap-1.5 shadow-[0_3px_0_var(--duo-feather-shadow)] active:translate-y-px active:shadow-none shrink-0"
-          >
-            {isPending ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Save className="w-3.5 h-3.5" />
-            )}
-            Save Name
-          </button>
+          {error ? (
+            <p id="store-name-error" role="alert" className={errorTextClass}>
+              {error}
+            </p>
+          ) : (
+            <p id="store-name-hint" className={hintClass}>
+              Leave empty to use your account name.
+            </p>
+          )}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          This store name appears across your product pages and public creator profile.
-        </p>
-      </div>
-    </form>
+        <div className="flex items-center justify-end gap-3">
+          {!dirty && saved ? (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Check className="size-3.5 text-success" strokeWidth={1.75} /> Saved
+            </span>
+          ) : null}
+          <Button type="submit" disabled={isPending || !dirty || tooLong}>
+            {isPending ? <Loader2 className="animate-spin" /> : null}
+            {isPending ? "Saving…" : "Save name"}
+          </Button>
+        </div>
+      </form>
+    </Panel>
   );
 }

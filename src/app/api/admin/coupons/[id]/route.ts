@@ -1,57 +1,67 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { z } from "zod";
 import { db } from "@/db";
 import { coupons } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { isAdmin } from "@/lib/auth-utils";
+import { jsonError, jsonOk, readJson, requireAdmin } from "../../_lib/guard";
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authorized = await isAdmin();
-  if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized: Admin access required." }, { status: 401 });
+type RouteContext = { params: Promise<{ id: string }> };
+
+const patchSchema = z.object({ active: z.boolean() });
+
+function isValidId(id: string) {
+  return id.length > 0 && id.length <= 100;
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteContext) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const { id } = await params;
+  if (!isValidId(id)) return jsonError("Invalid coupon id.", 400);
+
+  const body = await readJson(request);
+  if (!body.ok) return jsonError("Request body must be valid JSON.", 400);
+
+  const parsed = patchSchema.safeParse(body.data);
+  if (!parsed.success) {
+    return jsonError("Active status is required.", 400);
   }
 
   try {
-    const { id } = await params;
-    const body = (await request.json()) as any;
-    const { active } = body;
-
-    if (active === undefined) {
-      return NextResponse.json({ error: "Active status is required." }, { status: 400 });
-    }
-
-    await db
+    const updated = await db
       .update(coupons)
-      .set({ active, updatedAt: new Date() })
-      .where(eq(coupons.id, id));
+      .set({ active: parsed.data.active, updatedAt: new Date() })
+      .where(eq(coupons.id, id))
+      .returning({ id: coupons.id });
 
-    return NextResponse.json({ success: true });
+    if (updated.length === 0) return jsonError("Coupon not found.", 404);
+    return jsonOk({});
   } catch (error) {
     console.error("PATCH admin coupon failed:", error);
-    return NextResponse.json({ error: "Server error updating coupon." }, { status: 500 });
+    return jsonError("Server error updating coupon.", 500);
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authorized = await isAdmin();
-  if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized: Admin access required." }, { status: 401 });
-  }
+export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const { id } = await params;
+  if (!isValidId(id)) return jsonError("Invalid coupon id.", 400);
 
   try {
-    const { id } = await params;
+    const deleted = await db
+      .delete(coupons)
+      .where(eq(coupons.id, id))
+      .returning({ id: coupons.id });
 
-    await db.delete(coupons).where(eq(coupons.id, id));
-
-    return NextResponse.json({ success: true });
+    if (deleted.length === 0) return jsonError("Coupon not found.", 404);
+    return jsonOk({});
   } catch (error) {
     console.error("DELETE admin coupon failed:", error);
-    return NextResponse.json({ error: "Server error deleting coupon." }, { status: 500 });
+    return jsonError("Server error deleting coupon.", 500);
   }
 }
+
 export const dynamic = "force-dynamic";

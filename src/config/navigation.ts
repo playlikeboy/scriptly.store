@@ -3,47 +3,57 @@ export interface NavItem {
   label: string;
   badge?: string;
   description?: string;
+  external?: boolean;
 }
 
+/** Primary catalogue navigation shown in the site header. */
 export const MAIN_NAVIGATION: NavItem[] = [
   { href: "/explore", label: "Explore", description: "Browse developer tools, scripts and templates" },
   { href: "/featured", label: "Featured", description: "Handpicked top premium releases" },
-  { href: "/explore?category=all", label: "Categories", description: "Explore categories" },
   { href: "/free", label: "Free", description: "Open source boilerplates, scripts and tools" },
   { href: "/blog", label: "Learn", description: "Engineering guides, tutorials and monetization" },
-  { href: "/creator", label: "Sell on Scriptly", description: "Sell your code and keep 95% of sales" },
 ];
 
-export const FOOTER_NAVIGATION = {
+/** Creator entry point, rendered apart from the catalogue links. */
+export const SELL_LINK: NavItem = {
+  href: "/creator",
+  label: "Sell on Scriptly",
+  description: "Sell your code and keep 95% of sales",
+};
+
+export const FOOTER_NAVIGATION: Record<
+  "marketplace" | "creators" | "learn" | "company" | "legal",
+  NavItem[]
+> = {
   marketplace: [
     { href: "/explore", label: "Explore" },
-    { href: "/explore?category=all", label: "Categories" },
-    { href: "/free", label: "Free Products" },
-    { href: "/offers", label: "Offers" },
     { href: "/featured", label: "Featured" },
+    { href: "/free", label: "Free products" },
+    { href: "/offers", label: "Offers" },
+    { href: "/search", label: "Search" },
   ],
   creators: [
     { href: "/creator", label: "Sell on Scriptly" },
-    { href: "/creator/new", label: "Submit Product" },
-    { href: "/affiliate", label: "Affiliate Program" },
-    { href: "/trust", label: "Creator Economics & Split" },
+    { href: "/creator/new", label: "Submit a product" },
+    { href: "/affiliate", label: "Affiliate program" },
+    { href: "/trust", label: "Creator economics & split" },
   ],
   learn: [
-    { href: "/blog", label: "Blog" },
-    { href: "/blog", label: "Developer Guides" },
-    { href: "/licenses", label: "License Guide" },
-    { href: "/docs/api", label: "API Docs" },
+    { href: "/blog", label: "Blog & guides" },
+    { href: "/licenses", label: "License guide" },
+    { href: "/docs/api", label: "API docs" },
+    { href: "/rss", label: "RSS feed" },
   ],
   company: [
     { href: "/about", label: "About" },
-    { href: "/trust", label: "Trust Center" },
-    { href: "/contact", label: "Support & Contact" },
-    { href: "https://razorpay.me/@iamsh", label: "Tip & Sponsor" },
+    { href: "/trust", label: "Trust center" },
+    { href: "/contact", label: "Support & contact" },
+    { href: "https://razorpay.me/@iamsh", label: "Tip & sponsor", external: true },
   ],
   legal: [
-    { href: "/terms", label: "Terms of Service" },
-    { href: "/privacy", label: "Privacy Policy" },
-    { href: "/refund", label: "Refund Policy" },
-    { href: "/dmca", label: "DMCA Policy" },
+    { href: "/terms", label: "Terms of service" },
+    { href: "/privacy", label: "Privacy policy" },
+    { href: "/refund", label: "Refund policy" },
+    { href: "/dmca", label: "DMCA policy" },
   ],
 };

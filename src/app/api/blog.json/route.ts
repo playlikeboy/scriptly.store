@@ -1,52 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BLOG_POSTS } from "@/lib/blog-data";
 
+// Blog content is static (bundled), so responses are safe to cache at the edge.
+const PUBLIC_HEADERS = {
+  "Cache-Control": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+  "Access-Control-Allow-Origin": "*",
+} as const;
+
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const limit = searchParams.get("limit");
-  const category = searchParams.get("category");
-  const slug = searchParams.get("slug");
+  const sp = request.nextUrl.searchParams;
+  const slug = sp.get("slug");
+  const category = sp.get("category")?.toLowerCase();
+  const limitNum = Number.parseInt(sp.get("limit") ?? "", 10);
+  const limit = Number.isFinite(limitNum) && limitNum >= 0 ? limitNum : undefined;
 
   try {
-    let posts = [...BLOG_POSTS];
-
-    // Filter by slug
-    if (slug) {
-      posts = posts.filter((p) => p.slug === slug);
+    const publicPosts = [];
+    for (const post of BLOG_POSTS) {
+      if (limit !== undefined && publicPosts.length >= limit) break;
+      if (slug && post.slug !== slug) continue;
+      if (category && post.category.toLowerCase() !== category) continue;
+      publicPosts.push({ ...post, url: `https://scriptly.store/blog/${post.slug}` });
     }
 
-    // Filter by category
-    if (category) {
-      posts = posts.filter(
-        (p) => p.category.toLowerCase() === category.toLowerCase()
-      );
-    }
-
-    // Apply limit
-    if (limit) {
-      const limitNum = parseInt(limit);
-      if (!isNaN(limitNum)) {
-        posts = posts.slice(0, limitNum);
-      }
-    }
-
-    const publicPosts = posts.map((post) => ({
-      ...post,
-      url: `https://scriptly.store/blog/${post.slug}`,
-    }));
-
-    return NextResponse.json({
-      success: true,
-      count: publicPosts.length,
-      posts: publicPosts,
-    });
+    return NextResponse.json(
+      { success: true, count: publicPosts.length, posts: publicPosts },
+      { headers: PUBLIC_HEADERS }
+    );
   } catch (error) {
     console.error("GET blog.json failed:", error);
     return NextResponse.json(
-      { error: "Server error fetching blog posts." },
-      { status: 500 }
+      { success: false, error: "Server error fetching blog posts." },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
-
-export const dynamic = "force-dynamic";

@@ -1,61 +1,125 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { and, count, desc, eq, ilike, isNull, or, type SQL } from "drizzle-orm";
+import { Plus } from "lucide-react";
 import { db } from "@/db";
 import { products } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
-import { redirect } from "next/navigation";
-import Link from "next/link";
-import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import CreatorProductsTable from "@/components/CreatorProductsTable";
+import CreatorProductsFilters from "@/components/creator/CreatorProductsFilters";
+import { PageHeader } from "@/components/creator/console-ui";
 
 export const metadata: Metadata = {
   title: "My Creations | Creator Console",
   description: "View and manage all listed developer scripts and templates.",
 };
 
-export default async function CreatorProductsPage() {
+const PAGE_SIZE = 10;
+const STATUSES = ["approved", "pending", "rejected"] as const;
+type StatusFilter = (typeof STATUSES)[number] | "all";
+
+export default async function CreatorProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string; page?: string }>;
+}) {
   const user = await getOrCreateDbUser();
   if (!user) {
-    redirect("/handler/sign-in?redirectTo=/creator/dashboard");
+    redirect("/handler/sign-in?redirectTo=/creator/products");
   }
 
-  // Fetch creator's products
-  const creatorProducts = await db
-    .select()
-    .from(products)
-    .where(eq(products.creatorId, user.id))
-    .orderBy(desc(products.createdAt));
+  const params = await searchParams;
+  const q = (params.q ?? "").trim().slice(0, 100);
+  const status: StatusFilter = (STATUSES as readonly string[]).includes(params.status ?? "")
+    ? (params.status as StatusFilter)
+    : "all";
+  const requested = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+
+  const conditions: SQL[] = [eq(products.creatorId, user.id)];
+  if (q) {
+    const term = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    conditions.push(or(ilike(products.title, term), ilike(products.slug, term))!);
+  }
+  if (status === "pending") {
+    conditions.push(or(eq(products.status, "pending"), isNull(products.status))!);
+  } else if (status !== "all") {
+    conditions.push(eq(products.status, status));
+  }
+  const where = and(...conditions);
+
+  const [[{ total }], [{ all }]] = await Promise.all([
+    db.select({ total: count() }).from(products).where(where),
+    db.select({ all: count() }).from(products).where(eq(products.creatorId, user.id)),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const page = Math.min(requested, totalPages);
+
+  const rows =
+    total > 0
+      ? await db
+          .select({
+            id: products.id,
+            title: products.title,
+            slug: products.slug,
+            category: products.category,
+            thumbnail: products.thumbnail,
+            price: products.price,
+            isFree: products.isFree,
+            status: products.status,
+            published: products.published,
+            createdAt: products.createdAt,
+          })
+          .from(products)
+          .where(where)
+          .orderBy(desc(products.createdAt))
+          .limit(PAGE_SIZE)
+          .offset((page - 1) * PAGE_SIZE)
+      : [];
+
+  const buildHref = (nextPage: number) => {
+    const sp = new URLSearchParams();
+    if (q) sp.set("q", q);
+    if (status !== "all") sp.set("status", status);
+    if (nextPage > 1) sp.set("page", String(nextPage));
+    const s = sp.toString();
+    return s ? `/creator/products?${s}` : "/creator/products";
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-5">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-foreground">
-            My Creations
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Manage your listed scripts, adjust pricing, or edit documentation.
-          </p>
-        </div>
-        <Button
-          asChild
-          size="sm"
-          className="bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-[0_3px_0_#46A302] active:translate-y-px active:shadow-none"
-        >
-          <Link href="/creator/new">
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> List New Script
-          </Link>
-        </Button>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Products"
+        description="Your listed scripts, templates and kits. Edits go back to review before they update the live listing."
+        actions={
+          <Button asChild size="sm">
+            <Link href="/creator/new">
+              <Plus strokeWidth={1.75} /> New product
+            </Link>
+          </Button>
+        }
+      />
 
-      {/* Table Container */}
-      <div className="border border-border/50 bg-card/30 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm">
-        <CreatorProductsTable products={creatorProducts} />
-      </div>
+      <section aria-label="Your products" className="overflow-hidden rounded-2xl border border-border bg-card">
+        <CreatorProductsFilters key={`${q}|${status}`} initialQuery={q} initialStatus={status} />
+        <CreatorProductsTable
+          products={rows}
+          hasAnyProducts={all > 0}
+          isFiltered={Boolean(q) || status !== "all"}
+          pagination={{
+            page,
+            totalPages,
+            total,
+            pageSize: PAGE_SIZE,
+            prevHref: page > 1 ? buildHref(page - 1) : null,
+            nextHref: page < totalPages ? buildHref(page + 1) : null,
+          }}
+        />
+      </section>
     </div>
   );
 }

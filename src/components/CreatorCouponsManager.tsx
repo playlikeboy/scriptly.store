@@ -1,9 +1,25 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { createCreatorCouponAction, deleteCreatorCouponAction } from "@/lib/actions/creator";
+import { useRouter } from "next/navigation";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Gift, Plus, Trash2, Loader2, AlertCircle } from "lucide-react";
+import { createCreatorCouponAction, deleteCreatorCouponAction } from "@/lib/actions/creator";
+import { formatMoney } from "@/lib/price-utils";
+import { Button } from "@/components/ui/button";
+import {
+  EmptyState,
+  Panel,
+  StatusPill,
+  errorTextClass,
+  fieldClass,
+  hintClass,
+  labelClass,
+  selectClass,
+  tableCellClass,
+  tableHeadClass,
+} from "@/components/creator/console-ui";
+import { cn } from "@/lib/utils";
 
 interface CreatorCoupon {
   id: string;
@@ -14,224 +30,262 @@ interface CreatorCoupon {
   active: boolean;
 }
 
-interface CreatorCouponsManagerProps {
-  initialCoupons: CreatorCoupon[];
+type Errors = Partial<Record<"code" | "discountValue" | "minPurchaseAmount" | "form", string>>;
+
+function validate(code: string, type: string, value: string, min: string): Errors {
+  const errors: Errors = {};
+  if (!/^[A-Z0-9]{3,15}$/.test(code)) {
+    errors.code = "Use 3–15 letters or numbers, no spaces.";
+  }
+  const v = Number(value);
+  if (!value || !Number.isInteger(v) || v <= 0) {
+    errors.discountValue = "Enter a whole number above 0.";
+  } else if (type === "percentage" && v > 100) {
+    errors.discountValue = "A percentage can’t be more than 100.";
+  }
+  if (min && (Number.isNaN(Number(min)) || Number(min) < 0)) {
+    errors.minPurchaseAmount = "Enter an amount in dollars, or leave empty.";
+  }
+  return errors;
 }
 
-const formatINR = (val: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(val);
-
-export default function CreatorCouponsManager({ initialCoupons }: CreatorCouponsManagerProps) {
-  const [couponsList, setCouponsList] = useState<CreatorCoupon[]>(initialCoupons);
-  const [isPending, startTransition] = useTransition();
+export default function CreatorCouponsManager({ initialCoupons }: { initialCoupons: CreatorCoupon[] }) {
+  const router = useRouter();
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  const [isCreating, startCreate] = useTransition();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [code, setCode] = useState("");
   const [discountType, setDiscountType] = useState("percentage");
   const [discountValue, setDiscountValue] = useState("");
   const [minPurchaseAmount, setMinPurchaseAmount] = useState("");
+  const [errors, setErrors] = useState<Errors>({});
+
+  const couponsList = initialCoupons.filter((c) => !removed.has(c.id));
 
   const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
+    const nextErrors = validate(code, discountType, discountValue, minPurchaseAmount);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
 
-    startTransition(async () => {
+    const formData = new FormData();
+    formData.set("code", code);
+    formData.set("discountType", discountType);
+    // Fixed discounts are applied in cents at checkout, so convert dollars → cents.
+    formData.set(
+      "discountValue",
+      discountType === "fixed" ? String(Math.round(Number(discountValue) * 100)) : discountValue
+    );
+    // The action converts this dollar amount to cents itself.
+    formData.set("minPurchaseAmount", minPurchaseAmount || "0");
+
+    startCreate(async () => {
       try {
         const res = await createCreatorCouponAction(formData);
-        if (res.success) {
-          toast.success("Store coupon created successfully!");
+        if (res?.success) {
+          toast.success(`Coupon ${code} created.`);
           setCode("");
           setDiscountValue("");
           setMinPurchaseAmount("");
-          window.location.reload();
+          router.refresh();
         } else {
-          toast.error("Failed to create coupon.");
+          setErrors({ form: "Could not create the coupon. Try again." });
         }
-      } catch (err: any) {
-        toast.error(err.message || "Failed to create coupon.");
+      } catch (err) {
+        setErrors({
+          form:
+            err instanceof Error && err.message
+              ? err.message
+              : "Could not create the coupon. The code may already be taken.",
+        });
       }
     });
   };
 
-  const handleDelete = (id: string, couponCode: string) => {
-    if (!confirm(`Are you sure you want to delete coupon "${couponCode}"?`)) return;
-
-    startTransition(async () => {
-      try {
-        const res = await deleteCreatorCouponAction(id);
-        if (res.success) {
-          toast.success(`Coupon "${couponCode}" deleted.`);
-          setCouponsList((prev) => prev.filter((c) => c.id !== id));
-        } else {
-          toast.error("Failed to delete coupon.");
-        }
-      } catch (err: any) {
-        toast.error(err.message || "Failed to delete coupon.");
+  const handleDelete = async (coupon: CreatorCoupon) => {
+    if (!window.confirm(`Delete coupon ${coupon.code}? Customers will no longer be able to use it.`)) return;
+    setDeletingId(coupon.id);
+    try {
+      const res = await deleteCreatorCouponAction(coupon.id);
+      if (res?.success) {
+        setRemoved((prev) => new Set(prev).add(coupon.id));
+        toast.success(`Coupon ${coupon.code} deleted.`);
+        router.refresh();
+      } else {
+        toast.error("Could not delete the coupon. Try again.");
       }
-    });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete the coupon. Try again.");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      {/* Create Coupon Form */}
-      <form
-        onSubmit={handleCreate}
-        className="lg:col-span-5 p-5 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md shadow-sm space-y-4"
-      >
-        <div className="flex items-center gap-2 pb-3 border-b border-border/40">
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-            <Gift className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-sm font-black text-foreground">Create Discount Code</h3>
-            <p className="text-[11px] text-muted-foreground">Applies store-wide to your scripts</p>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-            Coupon Code *
-          </label>
-          <input
-            type="text"
-            name="code"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder="e.g. FLASH30, DEV20"
-            required
-            className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-mono font-bold tracking-wider focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/60"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      <Panel className="lg:col-span-5" title="New coupon" description="Valid on every product in your store.">
+        <form onSubmit={handleCreate} noValidate className="space-y-4 p-4 sm:p-5">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-              Type
-            </label>
-            <select
-              name="discountType"
-              value={discountType}
-              onChange={(e) => {
-                setDiscountType(e.target.value);
-                setDiscountValue("");
-              }}
-              className="w-full px-3 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-semibold focus:outline-none focus:border-primary/50 cursor-pointer"
-            >
-              <option value="percentage">Percentage (%)</option>
-              <option value="fixed">Fixed (₹)</option>
-            </select>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-              {discountType === "percentage" ? "Value (%) *" : "Value (₹) *"}
+            <label htmlFor="coupon-code" className={labelClass}>
+              Code
             </label>
             <input
-              type="number"
-              name="discountValue"
-              value={discountValue}
-              onChange={(e) => setDiscountValue(e.target.value)}
-              placeholder={discountType === "percentage" ? "20" : "200"}
-              min="1"
-              required
-              className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-bold focus:outline-none focus:border-primary/50 transition-colors"
+              id="coupon-code"
+              name="code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/\s/g, ""))}
+              placeholder="LAUNCH20"
+              maxLength={15}
+              autoComplete="off"
+              aria-invalid={Boolean(errors.code)}
+              aria-describedby={errors.code ? "coupon-code-error" : "coupon-code-hint"}
+              className={cn(fieldClass, "font-mono tracking-wide uppercase")}
             />
+            {errors.code ? (
+              <p id="coupon-code-error" className={errorTextClass}>{errors.code}</p>
+            ) : (
+              <p id="coupon-code-hint" className={hintClass}>3–15 letters or numbers.</p>
+            )}
           </div>
-        </div>
 
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-            Min Order Value (Optional)
-          </label>
-          <input
-            type="number"
-            name="minPurchaseAmount"
-            step="1"
-            value={minPurchaseAmount}
-            onChange={(e) => setMinPurchaseAmount(e.target.value)}
-            placeholder="e.g. 500"
-            className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-medium focus:outline-none focus:border-primary/50 transition-colors"
-          />
-        </div>
+          <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
+            <div className="space-y-1.5">
+              <label htmlFor="coupon-type" className={labelClass}>
+                Discount type
+              </label>
+              <select
+                id="coupon-type"
+                value={discountType}
+                onChange={(e) => {
+                  setDiscountType(e.target.value);
+                  setDiscountValue("");
+                  setErrors((prev) => ({ ...prev, discountValue: undefined }));
+                }}
+                className={selectClass}
+              >
+                <option value="percentage">Percentage</option>
+                <option value="fixed">Fixed amount ($)</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="coupon-value" className={labelClass}>
+                {discountType === "percentage" ? "Discount (%)" : "Discount ($)"}
+              </label>
+              <input
+                id="coupon-value"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={discountType === "percentage" ? 100 : undefined}
+                step={1}
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                placeholder={discountType === "percentage" ? "20" : "200"}
+                aria-invalid={Boolean(errors.discountValue)}
+                aria-describedby={errors.discountValue ? "coupon-value-error" : undefined}
+                className={cn(fieldClass, "tabular")}
+              />
+              {errors.discountValue ? (
+                <p id="coupon-value-error" className={errorTextClass}>{errors.discountValue}</p>
+              ) : null}
+            </div>
+          </div>
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full py-2.5 bg-primary text-primary-foreground hover:brightness-105 disabled:opacity-50 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer shadow-[0_3px_0_var(--duo-feather-shadow)] active:translate-y-px active:shadow-none mt-2"
-        >
-          {isPending ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Plus className="w-3.5 h-3.5" />
-          )}
-          Create Coupon
-        </button>
-      </form>
+          <div className="space-y-1.5">
+            <label htmlFor="coupon-min" className={labelClass}>
+              Minimum order ($) <span className="font-normal text-muted-foreground">optional</span>
+            </label>
+            <input
+              id="coupon-min"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              value={minPurchaseAmount}
+              onChange={(e) => setMinPurchaseAmount(e.target.value)}
+              placeholder="500"
+              aria-invalid={Boolean(errors.minPurchaseAmount)}
+              aria-describedby={errors.minPurchaseAmount ? "coupon-min-error" : undefined}
+              className={cn(fieldClass, "tabular")}
+            />
+            {errors.minPurchaseAmount ? (
+              <p id="coupon-min-error" className={errorTextClass}>{errors.minPurchaseAmount}</p>
+            ) : null}
+          </div>
 
-      {/* Coupons List */}
-      <div className="lg:col-span-7 space-y-3">
-        <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-          Active Store Coupons
-        </h3>
+          {errors.form ? (
+            <p role="alert" className="rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {errors.form}
+            </p>
+          ) : null}
 
+          <Button type="submit" disabled={isCreating} className="w-full">
+            {isCreating ? <Loader2 className="animate-spin" /> : <Plus strokeWidth={1.75} />}
+            {isCreating ? "Creating…" : "Create coupon"}
+          </Button>
+        </form>
+      </Panel>
+
+      <Panel
+        className="overflow-hidden lg:col-span-7"
+        title="Your coupons"
+        description={`${couponsList.length} ${couponsList.length === 1 ? "code" : "codes"}`}
+      >
         {couponsList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 border border-border/50 rounded-2xl bg-card/20 text-center space-y-2 p-4">
-            <AlertCircle className="w-7 h-7 text-muted-foreground/40" />
-            <div className="space-y-0.5">
-              <p className="text-xs font-bold text-foreground">No active coupons</p>
-              <p className="text-[11px] text-muted-foreground">Create a coupon to offer store-wide discounts.</p>
-            </div>
-          </div>
+          <EmptyState
+            title="No coupons yet"
+            description="Create a code to offer a store-wide discount on launch day or to your newsletter."
+          />
         ) : (
-          <div className="border border-border/50 rounded-2xl overflow-hidden bg-card/30 backdrop-blur-md shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-border/40 bg-muted/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                    <th className="py-3 px-4">Code</th>
-                    <th className="py-3 px-4">Discount</th>
-                    <th className="py-3 px-4">Min Spend</th>
-                    <th className="py-3 px-4 text-right">Action</th>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[460px] border-collapse text-sm">
+              <thead className="border-b border-border bg-secondary/40">
+                <tr>
+                  <th scope="col" className={tableHeadClass}>Code</th>
+                  <th scope="col" className={tableHeadClass}>Discount</th>
+                  <th scope="col" className={tableHeadClass}>Min. order</th>
+                  <th scope="col" className={tableHeadClass}>Status</th>
+                  <th scope="col" className={`${tableHeadClass} text-right`}>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {couponsList.map((coupon) => (
+                  <tr key={coupon.id} className="transition-colors hover:bg-secondary/40">
+                    <td className={`${tableCellClass} font-mono font-medium text-foreground`}>{coupon.code}</td>
+                    <td className={`${tableCellClass} tabular whitespace-nowrap text-foreground`}>
+                      {coupon.discountType === "percentage"
+                        ? `${coupon.discountValue}% off`
+                        : `${formatMoney(coupon.discountValue)} off`}
+                    </td>
+                    <td className={`${tableCellClass} tabular whitespace-nowrap text-muted-foreground`}>
+                      {coupon.minPurchaseAmount > 0 ? formatMoney(coupon.minPurchaseAmount) : "None"}
+                    </td>
+                    <td className={tableCellClass}>
+                      {coupon.active ? <StatusPill tone="success">Active</StatusPill> : <StatusPill>Inactive</StatusPill>}
+                    </td>
+                    <td className={`${tableCellClass} text-right`}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={deletingId === coupon.id}
+                        onClick={() => handleDelete(coupon)}
+                        aria-label={`Delete coupon ${coupon.code}`}
+                        className="hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        {deletingId === coupon.id ? <Loader2 className="animate-spin" /> : <Trash2 strokeWidth={1.75} />}
+                      </Button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-border/30 text-xs">
-                  {couponsList.map((coupon) => (
-                    <tr key={coupon.id} className="hover:bg-muted/15 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-foreground tracking-wider">
-                        {coupon.code}
-                      </td>
-                      <td className="py-3 px-4 font-bold text-emerald-500">
-                        {coupon.discountType === "percentage"
-                          ? `${coupon.discountValue}% OFF`
-                          : `${formatINR(coupon.discountValue / 100)} OFF`}
-                      </td>
-                      <td className="py-3 px-4 text-muted-foreground">
-                        {coupon.minPurchaseAmount > 0
-                          ? formatINR(coupon.minPurchaseAmount / 100)
-                          : "None"}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          disabled={isPending}
-                          onClick={() => handleDelete(coupon.id, coupon.code)}
-                          className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                          title="Delete Coupon"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }

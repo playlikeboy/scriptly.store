@@ -1,113 +1,214 @@
 "use server";
 
+import { cache } from "react";
 import { db } from "@/db";
-import { products } from "@/db/schema";
-import { eq, desc, asc, inArray, and, or, ilike, gt, sql } from "drizzle-orm";
+import { products, categories as categoriesTable, subcategories } from "@/db/schema";
+import { eq, desc, asc, inArray, and, or, ilike, gt, ne, sql, getTableColumns, type SQL } from "drizzle-orm";
 import { isAdmin, getOrCreateDbUser } from "@/lib/auth-utils";
 import { revalidatePath } from "next/cache";
 
-export async function createProductAction(formData: FormData) {
+// ---------------------------------------------------------------------------
+// Input parsing helpers (server-side validation for FormData-based actions)
+// ---------------------------------------------------------------------------
+
+const PRODUCT_STATUSES = new Set(["pending", "approved", "rejected"]);
+const MAX_PRICE_PAISE = 100_000_000; // $1,000,000 in cents
+const MAX_BULK_IDS = 500;
+
+type DbUser = NonNullable<Awaited<ReturnType<typeof getOrCreateDbUser>>>;
+
+function formString(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  return typeof value === "string" ? value : "";
+}
+
+function formInt(formData: FormData, key: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(formString(formData, key) || String(fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function formDate(formData: FormData, key: string): Date | null {
+  const raw = formString(formData, key);
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+/** http(s) URLs only — blocks javascript:/data: payloads in rendered links. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Absolute http(s) URL or a site-relative path (e.g. "/thumbnails/x.png"). */
+function isHttpOrRelativeUrl(value: string): boolean {
+  return (value.startsWith("/") && !value.startsWith("//")) || isHttpUrl(value);
+}
+
+function optionalUrl(
+  formData: FormData,
+  key: string,
+  label: string,
+  check: (v: string) => boolean = isHttpOrRelativeUrl
+): string | null {
+  const value = formString(formData, key).trim();
+  if (!value) return null;
+  if (value.length > 2048 || !check(value)) {
+    throw new Error(`Invalid ${label} URL. Use an http(s) link.`);
+  }
+  return value;
+}
+
+function assertValidId(id: unknown): asserts id is string {
+  if (typeof id !== "string" || id.length === 0 || id.length > 200) {
+    throw new Error("Product not found");
+  }
+}
+
+function sanitizeIds(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return [];
+  const clean = ids.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200);
+  if (clean.length > MAX_BULK_IDS) {
+    throw new Error(`Too many products selected (max ${MAX_BULK_IDS}).`);
+  }
+  return Array.from(new Set(clean));
+}
+
+/** Escapes LIKE/ILIKE wildcards so user search text matches literally. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+async function assertSlugAvailable(slug: string, excludeId?: string) {
+  const conflict = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(excludeId ? and(eq(products.slug, slug), ne(products.id, excludeId)) : eq(products.slug, slug))
+    .limit(1);
+  if (conflict.length > 0) {
+    throw new Error(`The slug "${slug}" is already used by another product.`);
+  }
+}
+
+/**
+ * Parses the fields shared by create and update. Price arrives in rupees and
+ * is stored as integer paise. Admin-only fields are ignored for creators.
+ */
+function parseProductForm(formData: FormData, isUserAdmin: boolean, existingFileUrl: string | null) {
+  const title = formString(formData, "title").trim().slice(0, 200) || "Draft Product";
+
+  const priceParsed = Number.parseFloat(formString(formData, "price"));
+  const price = Number.isFinite(priceParsed)
+    ? Math.min(MAX_PRICE_PAISE, Math.max(0, Math.round(priceParsed * 100)))
+    : 0;
+
+  // Creators may only point to hosted (http/https) files; local storage paths
+  // are reserved for admins so a creator can't reference another product's file.
+  const rawFileUrl = formString(formData, "fileUrl").trim();
+  let fileUrl: string | null = rawFileUrl || null;
+  if (fileUrl && fileUrl.length > 2048) {
+    throw new Error("Invalid product file URL.");
+  }
+  if (fileUrl && !isUserAdmin && fileUrl !== existingFileUrl && !isHttpUrl(fileUrl)) {
+    throw new Error("Product file must be an uploaded file or an http(s) link.");
+  }
+  if (fileUrl && /^\s*(javascript|data|vbscript):/i.test(fileUrl)) {
+    fileUrl = null;
+  }
+
+  return {
+    title,
+    rawSlug: formString(formData, "slug").trim(),
+    shortDescription: formString(formData, "shortDescription").slice(0, 2000) || "No description provided.",
+    description: formString(formData, "description").slice(0, 200_000) || "No full description provided yet.",
+    category: formString(formData, "category").trim().slice(0, 100) || "templates",
+    subcategory: formString(formData, "subcategory").trim().slice(0, 100) || null,
+    tags: formString(formData, "tags").slice(0, 2000) || null,
+    demoUrl: optionalUrl(formData, "demoUrl", "demo", isHttpUrl),
+    thumbnail: optionalUrl(formData, "thumbnail", "thumbnail"),
+    previewGif: optionalUrl(formData, "previewGif", "preview"),
+    screenshots: formString(formData, "screenshots").slice(0, 20_000) || null,
+    videoUrl: optionalUrl(formData, "videoUrl", "video", isHttpUrl),
+    fileUrl,
+    redirectDownload: formString(formData, "redirectDownload") !== "false",
+    price,
+    version: formString(formData, "version").trim().slice(0, 50) || "1.0.0",
+    isFree: formString(formData, "isFree") === "true",
+    discountPercent: formInt(formData, "discountPercent", 0, 0, 100),
+    promoStart: formDate(formData, "promoStart"),
+    promoEnd: formDate(formData, "promoEnd"),
+    personal: formString(formData, "personal") === "true",
+    showStats: formString(formData, "showStats") === "true",
+    affiliateCommissionPercent: formInt(formData, "affiliateCommissionPercent", 30, 5, 50),
+  };
+}
+
+/** Public counters can only be edited by admins (creators can't fake social proof). */
+function parseAdminStats(formData: FormData) {
+  return {
+    views: formInt(formData, "views", 0, 0, 2_000_000_000),
+    downloadsCount: formInt(formData, "downloadsCount", 0, 0, 2_000_000_000),
+    saves: formInt(formData, "saves", 0, 0, 2_000_000_000),
+  };
+}
+
+async function requireUser(): Promise<DbUser> {
   const user = await getOrCreateDbUser();
   if (!user) {
     throw new Error("Unauthorized: Sign in required.");
   }
+  return user;
+}
 
+async function requireAdminUser() {
+  if (!(await isAdmin())) {
+    throw new Error("Unauthorized: Admin access required.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+export async function createProductAction(formData: FormData) {
+  const user = await requireUser();
   const isUserAdmin = user.role === "admin";
 
-  const title = (formData.get("title") as string) || "Draft Product";
-  let slug = formData.get("slug") as string;
-  if (!slug) {
-    slug = title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-  }
-  if (!slug) {
-    slug = "draft-product-" + crypto.randomUUID().slice(0, 8);
-  }
-  
-  const shortDescription = (formData.get("shortDescription") as string) || "No description provided.";
-  const description = (formData.get("description") as string) || "No full description provided yet.";
-  const category = (formData.get("category") as string) || "templates";
-  const subcategory = formData.get("subcategory") as string;
-  const tags = formData.get("tags") as string;
-  const demoUrl = (formData.get("demoUrl") as string) || null;
-  
-  const priceInput = formData.get("price") as string;
-  const priceParsed = parseFloat(priceInput);
-  const price = isNaN(priceParsed) ? 0 : Math.round(priceParsed * 100);
+  const fields = parseProductForm(formData, isUserAdmin, null);
+  const slug = slugify(fields.rawSlug || fields.title) || "draft-product-" + crypto.randomUUID().slice(0, 8);
+  await assertSlugAvailable(slug);
 
-  const version = (formData.get("version") as string) || "1.0.0";
-  
   // Rules: Creators cannot set featured or publish directly.
-  const featured = isUserAdmin ? (formData.get("featured") === "true") : false;
-  const published = isUserAdmin ? (formData.get("published") === "true") : false;
+  const featured = isUserAdmin ? formString(formData, "featured") === "true" : false;
+  const published = isUserAdmin ? formString(formData, "published") === "true" : false;
   const status = isUserAdmin ? (published ? "approved" : "pending") : "pending";
-  const creatorId = isUserAdmin ? (formData.get("creatorId") as string || null) : user.id;
+  const creatorId = isUserAdmin ? formString(formData, "creatorId").trim() || null : user.id;
+  const stats = isUserAdmin ? parseAdminStats(formData) : { views: 0, downloadsCount: 0, saves: 0 };
 
-  const isFree = formData.get("isFree") === "true";
-  const discountPercentVal = parseInt(formData.get("discountPercent") as string || "0", 10);
-  const discountPercent = isNaN(discountPercentVal) ? 0 : discountPercentVal;
-  const promoStartStr = formData.get("promoStart") as string;
-  const promoEndStr = formData.get("promoEnd") as string;
-  const promoStart = promoStartStr ? new Date(promoStartStr) : null;
-  const promoEnd = promoEndStr ? new Date(promoEndStr) : null;
-
-  const thumbnailUrl = formData.get("thumbnail") as string;
-  const previewGif = formData.get("previewGif") as string;
-  const screenshots = formData.get("screenshots") as string; // JSON or comma-separated
-  const videoUrl = formData.get("videoUrl") as string;
-  const fileUrl = formData.get("fileUrl") as string;
-  const redirectDownload = formData.get("redirectDownload") !== "false";
-  const personal = formData.get("personal") === "true";
-  const showStats = formData.get("showStats") === "true";
-
-  const viewsVal = parseInt(formData.get("views") as string || "0", 10);
-  const views = isNaN(viewsVal) ? 0 : viewsVal;
-
-  const downloadsVal = parseInt(formData.get("downloadsCount") as string || "0", 10);
-  const downloadsCount = isNaN(downloadsVal) ? 0 : downloadsVal;
-
-  const savesVal = parseInt(formData.get("saves") as string || "0", 10);
-  const saves = isNaN(savesVal) ? 0 : savesVal;
-
-  const affiliateCommissionPercentVal = parseInt(formData.get("affiliateCommissionPercent") as string || "30", 10);
-  const affiliateCommissionPercent = isNaN(affiliateCommissionPercentVal) ? 30 : Math.max(5, Math.min(affiliateCommissionPercentVal, 50));
-
-  const id = crypto.randomUUID();
+  const { rawSlug: _rawSlug, ...data } = fields;
+  void _rawSlug;
 
   await db.insert(products).values({
-    id,
-    title,
+    id: crypto.randomUUID(),
+    ...data,
     slug,
-    shortDescription,
-    description,
-    category,
-    subcategory: subcategory || null,
-    tags: tags || null,
-    thumbnail: thumbnailUrl || null,
-    previewGif: previewGif || null,
-    screenshots: screenshots || null,
-    videoUrl: videoUrl || null,
-    demoUrl,
-    fileUrl: fileUrl || null,
-    redirectDownload,
-    price,
-    version,
     featured,
     published,
     creatorId,
     status,
-    isFree,
-    discountPercent,
-    promoStart,
-    promoEnd,
-    personal,
-    showStats,
-    views,
-    downloadsCount,
-    saves,
-    affiliateCommissionPercent,
+    ...stats,
   });
 
   revalidatePath("/");
@@ -116,13 +217,12 @@ export async function createProductAction(formData: FormData) {
 }
 
 export async function updateProductAction(id: string, formData: FormData) {
-  const user = await getOrCreateDbUser();
-  if (!user) {
-    throw new Error("Unauthorized: Sign in required.");
-  }
+  const user = await requireUser();
+  assertValidId(id);
 
   const existing = await db.query.products.findFirst({
     where: eq(products.id, id),
+    columns: { id: true, slug: true, creatorId: true, fileUrl: true },
   });
 
   if (!existing) {
@@ -134,259 +234,183 @@ export async function updateProductAction(id: string, formData: FormData) {
     throw new Error("Unauthorized: You do not own this product.");
   }
 
-  const title = (formData.get("title") as string) || "Draft Product";
-  let slug = formData.get("slug") as string;
-  if (!slug) {
-    slug = title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-  }
-  if (!slug) {
-    slug = "draft-product-" + crypto.randomUUID().slice(0, 8);
-  }
-  
-  const shortDescription = (formData.get("shortDescription") as string) || "No description provided.";
-  const description = (formData.get("description") as string) || "No full description provided yet.";
-  const category = (formData.get("category") as string) || "templates";
-  const subcategory = formData.get("subcategory") as string;
-  const tags = formData.get("tags") as string;
-  const demoUrl = (formData.get("demoUrl") as string) || null;
-  
-  const priceInput = formData.get("price") as string;
-  const priceParsed = parseFloat(priceInput);
-  const price = isNaN(priceParsed) ? 0 : Math.round(priceParsed * 100);
+  const fields = parseProductForm(formData, isUserAdmin, existing.fileUrl);
 
-  const version = (formData.get("version") as string) || "1.0.0";
+  // Keep an unchanged slug byte-for-byte so existing URLs never break; normalize new ones.
+  let slug = fields.rawSlug === existing.slug ? existing.slug : slugify(fields.rawSlug || fields.title);
+  if (!slug) slug = "draft-product-" + crypto.randomUUID().slice(0, 8);
+  if (slug !== existing.slug) {
+    await assertSlugAvailable(slug, id);
+  }
 
-  // Rules: Creators cannot set featured. Editing approved product resets it to pending/unpublished.
-  const featured = isUserAdmin ? (formData.get("featured") === "true") : false;
-  const published = isUserAdmin ? (formData.get("published") === "true") : false;
-  
-  // If user is admin, allow status from formData or sync with published status.
-  // If user is creator, status resets to pending on edit.
-  const status = isUserAdmin 
-    ? (formData.get("status") as string || (published ? "approved" : "pending"))
+  // Rules: Creators cannot set featured. Editing resets a creator's product to pending/unpublished.
+  const featured = isUserAdmin ? formString(formData, "featured") === "true" : false;
+  const published = isUserAdmin ? formString(formData, "published") === "true" : false;
+  const requestedStatus = formString(formData, "status");
+  const status = isUserAdmin
+    ? PRODUCT_STATUSES.has(requestedStatus)
+      ? requestedStatus
+      : published
+        ? "approved"
+        : "pending"
     : "pending";
 
-  const isFree = formData.get("isFree") === "true";
-  const discountPercentVal = parseInt(formData.get("discountPercent") as string || "0", 10);
-  const discountPercent = isNaN(discountPercentVal) ? 0 : discountPercentVal;
-  const promoStartStr = formData.get("promoStart") as string;
-  const promoEndStr = formData.get("promoEnd") as string;
-  const promoStart = promoStartStr ? new Date(promoStartStr) : null;
-  const promoEnd = promoEndStr ? new Date(promoEndStr) : null;
-
-  const thumbnailUrl = formData.get("thumbnail") as string;
-  const previewGif = formData.get("previewGif") as string;
-  const screenshots = formData.get("screenshots") as string;
-  const videoUrl = formData.get("videoUrl") as string;
-  const fileUrl = formData.get("fileUrl") as string;
-  const redirectDownload = formData.get("redirectDownload") !== "false";
-  const personal = formData.get("personal") === "true";
-  const showStats = formData.get("showStats") === "true";
-
-  const viewsVal = parseInt(formData.get("views") as string || "0", 10);
-  const views = isNaN(viewsVal) ? 0 : viewsVal;
-
-  const downloadsVal = parseInt(formData.get("downloadsCount") as string || "0", 10);
-  const downloadsCount = isNaN(downloadsVal) ? 0 : downloadsVal;
-
-  const savesVal = parseInt(formData.get("saves") as string || "0", 10);
-  const saves = isNaN(savesVal) ? 0 : savesVal;
-
-  const affiliateCommissionPercentVal = parseInt(formData.get("affiliateCommissionPercent") as string || "30", 10);
-  const affiliateCommissionPercent = isNaN(affiliateCommissionPercentVal) ? 30 : Math.max(5, Math.min(affiliateCommissionPercentVal, 50));
+  const { rawSlug: _rawSlug, ...data } = fields;
+  void _rawSlug;
 
   await db
     .update(products)
     .set({
-      title,
+      ...data,
       slug,
-      shortDescription,
-      description,
-      category,
-      subcategory: subcategory || null,
-      tags: tags || null,
-      thumbnail: thumbnailUrl || null,
-      previewGif: previewGif || null,
-      screenshots: screenshots || null,
-      videoUrl: videoUrl || null,
-      demoUrl,
-      fileUrl: fileUrl || null,
-      redirectDownload,
-      price,
-      version,
       featured,
       published,
       status,
-      isFree,
-      discountPercent,
-      promoStart,
-      promoEnd,
-      personal,
-      showStats,
-      views,
-      downloadsCount,
-      saves,
-      affiliateCommissionPercent,
+      // Counters are admin-editable only; creators keep the live values.
+      ...(isUserAdmin ? parseAdminStats(formData) : {}),
       updatedAt: new Date(),
     })
     .where(eq(products.id, id));
 
   revalidatePath("/");
   revalidatePath(`/products/${slug}`);
+  if (slug !== existing.slug) revalidatePath(`/products/${existing.slug}`);
   revalidatePath("/admin/products");
   return { success: true };
 }
 
 export async function deleteProductAction(id: string) {
-  const user = await getOrCreateDbUser();
-  if (!user) {
-    throw new Error("Unauthorized: Sign in required.");
-  }
-
-  const existing = await db.query.products.findFirst({
-    where: eq(products.id, id),
-  });
-
-  if (!existing) {
-    throw new Error("Product not found");
-  }
+  const user = await requireUser();
+  assertValidId(id);
 
   const isUserAdmin = user.role === "admin";
-  if (!isUserAdmin && existing.creatorId !== user.id) {
-    throw new Error("Unauthorized: You do not own this product.");
+
+  // Ownership enforced inside the DELETE itself (no read-then-write race).
+  const deleted = await db
+    .delete(products)
+    .where(isUserAdmin ? eq(products.id, id) : and(eq(products.id, id), eq(products.creatorId, user.id)))
+    .returning({ slug: products.slug });
+
+  if (deleted.length === 0) {
+    const exists = await db.query.products.findFirst({
+      where: eq(products.id, id),
+      columns: { id: true },
+    });
+    throw new Error(exists ? "Unauthorized: You do not own this product." : "Product not found");
   }
 
-  await db.delete(products).where(eq(products.id, id));
-
   revalidatePath("/");
+  revalidatePath(`/products/${deleted[0].slug}`);
   revalidatePath("/admin/products");
   return { success: true };
 }
 
 export async function toggleProductPublishAction(id: string) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
+  await requireAdminUser();
+  assertValidId(id);
 
-  const existing = await db.query.products.findFirst({
-    where: eq(products.id, id),
-  });
+  // Atomic flip; publishing also approves, unpublishing keeps the current status.
+  const [updated] = await db
+    .update(products)
+    .set({
+      published: sql`NOT ${products.published}`,
+      status: sql`CASE WHEN ${products.published} THEN ${products.status} ELSE 'approved' END`,
+      updatedAt: new Date(),
+    })
+    .where(eq(products.id, id))
+    .returning({ slug: products.slug });
 
-  if (!existing) {
+  if (!updated) {
     throw new Error("Product not found");
   }
 
-  const newPublished = !existing.published;
-  const newStatus = newPublished ? "approved" : existing.status;
-
-  await db
-    .update(products)
-    .set({
-      published: newPublished,
-      status: newStatus,
-      updatedAt: new Date(),
-    })
-    .where(eq(products.id, id));
-
   revalidatePath("/");
-  revalidatePath(`/products/${existing.slug}`);
+  revalidatePath(`/products/${updated.slug}`);
   revalidatePath("/admin/products");
   return { success: true };
 }
 
 export async function bulkDeleteProductsAction(ids: string[]) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
-  if (!ids || ids.length === 0) return { success: true, count: 0 };
+  await requireAdminUser();
+  const cleanIds = sanitizeIds(ids);
+  if (cleanIds.length === 0) return { success: true, count: 0 };
 
-  await db.delete(products).where(inArray(products.id, ids));
+  const deleted = await db
+    .delete(products)
+    .where(inArray(products.id, cleanIds))
+    .returning({ id: products.id });
 
   revalidatePath("/");
   revalidatePath("/admin/products");
-  return { success: true, count: ids.length };
+  return { success: true, count: deleted.length };
 }
 
 export async function bulkSetProductsPublishAction(ids: string[], published: boolean) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
-  if (!ids || ids.length === 0) return { success: true, count: 0 };
+  await requireAdminUser();
+  const cleanIds = sanitizeIds(ids);
+  if (cleanIds.length === 0) return { success: true, count: 0 };
+  const publish = published === true;
 
-  await db
+  const updated = await db
     .update(products)
     .set({
-      published,
-      status: published ? "approved" : "pending",
+      published: publish,
+      status: publish ? "approved" : "pending",
       updatedAt: new Date(),
     })
-    .where(inArray(products.id, ids));
+    .where(inArray(products.id, cleanIds))
+    .returning({ id: products.id });
 
   revalidatePath("/");
   revalidatePath("/admin/products");
-  return { success: true, count: ids.length };
+  return { success: true, count: updated.length };
 }
 
 export async function toggleProductFeaturedAction(id: string) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
+  await requireAdminUser();
+  assertValidId(id);
 
-  const existing = await db.query.products.findFirst({
-    where: eq(products.id, id),
-  });
+  const [updated] = await db
+    .update(products)
+    .set({
+      featured: sql`NOT ${products.featured}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(products.id, id))
+    .returning({ slug: products.slug, featured: products.featured });
 
-  if (!existing) {
+  if (!updated) {
     throw new Error("Product not found");
   }
 
-  const featured = !existing.featured;
-
-  await db
-    .update(products)
-    .set({
-      featured,
-      updatedAt: new Date(),
-    })
-    .where(eq(products.id, id));
-
   revalidatePath("/");
   revalidatePath("/featured");
-  revalidatePath(`/products/${existing.slug}`);
+  revalidatePath(`/products/${updated.slug}`);
   revalidatePath("/admin/products");
 
-  return { success: true, featured };
+  return { success: true, featured: updated.featured };
 }
 
 export async function bulkSetProductsFeaturedAction(ids: string[], featured: boolean) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
-  if (!ids || ids.length === 0) return { success: true, count: 0 };
+  await requireAdminUser();
+  const cleanIds = sanitizeIds(ids);
+  if (cleanIds.length === 0) return { success: true, count: 0 };
+  const isFeatured = featured === true;
 
-  await db
+  const updated = await db
     .update(products)
     .set({
-      featured,
+      featured: isFeatured,
       updatedAt: new Date(),
     })
-    .where(inArray(products.id, ids));
+    .where(inArray(products.id, cleanIds))
+    .returning({ id: products.id });
 
   revalidatePath("/");
   revalidatePath("/featured");
   revalidatePath("/admin/products");
-  return { success: true, count: ids.length, featured };
+  return { success: true, count: updated.length, featured: isFeatured };
 }
-
-import { categories as categoriesTable, subcategories } from "@/db/schema";
 
 export async function ensureCategoriesSeeded() {
   try {
@@ -470,7 +494,7 @@ export async function ensureCategoriesSeeded() {
           thumbnail: "/thumbnails/saas_starter.png",
           demoUrl: "https://demo.scriptlystore.com/saas-starter",
           fileUrl: "/mock/saas-starter.zip",
-          price: 100, // ₹1.00
+          price: 100, // $1.00
           version: "1.0.0",
           featured: true,
           published: true,
@@ -487,7 +511,7 @@ export async function ensureCategoriesSeeded() {
           thumbnail: "/thumbnails/growth_guide.png",
           demoUrl: null,
           fileUrl: "/mock/growth-guide.pdf",
-          price: 300, // ₹3.00
+          price: 300, // $3.00
           version: "2.1.0",
           featured: true,
           published: true,
@@ -504,7 +528,7 @@ export async function ensureCategoriesSeeded() {
           thumbnail: "/thumbnails/copywriter_prompt.png",
           demoUrl: null,
           fileUrl: "/mock/copywriter-prompt.txt",
-          price: 400, // ₹4.00
+          price: 400, // $4.00
           version: "1.0.0",
           featured: false,
           published: true,
@@ -521,7 +545,7 @@ export async function ensureCategoriesSeeded() {
           thumbnail: "/thumbnails/chrome_boilerplate.png",
           demoUrl: "https://demo.scriptlystore.com/chrome-extension",
           fileUrl: "/mock/chrome-boilerplate.zip",
-          price: 1000, // ₹10.00
+          price: 1000, // $10.00
           version: "1.2.0",
           featured: false,
           published: true,
@@ -538,7 +562,7 @@ export async function ensureCategoriesSeeded() {
           thumbnail: "/thumbnails/glass_ui.png",
           demoUrl: "https://demo.scriptlystore.com/glassmorphism",
           fileUrl: "/mock/glass-ui-kit.zip",
-          price: 4900, // ₹49.00
+          price: 4900, // $49.00
           version: "1.0.0",
           featured: false,
           published: true,
@@ -680,10 +704,18 @@ export async function ensureCategoriesSeeded() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
+// React cache() dedupes these lookups within a single server request
+// (generateMetadata + layout + page all ask for the taxonomy).
+const loadCategories = cache(async () => db.select().from(categoriesTable));
+const loadSubcategories = cache(async () => db.select().from(subcategories));
+
 export async function getCategoriesAction() {
   try {
-    // We don't seed on every request anymore to keep things clean
-    return await db.query.categories.findMany();
+    return await loadCategories();
   } catch (err) {
     console.error("getCategoriesAction failed:", err);
     return [];
@@ -692,15 +724,20 @@ export async function getCategoriesAction() {
 
 export async function getSubcategoriesAction() {
   try {
-    return await db.query.subcategories.findMany();
+    return await loadSubcategories();
   } catch (err) {
     console.error("getSubcategoriesAction failed:", err);
     return [];
   }
 }
 
-export async function getProductsAction(options?: { 
-  category?: string; 
+// Listing columns: everything except the downloadable file location, which must
+// only ever be resolved by the entitlement-checked /api/download route.
+const { fileUrl: _omitFileUrl, ...listingColumns } = getTableColumns(products);
+void _omitFileUrl;
+
+export async function getProductsAction(options?: {
+  category?: string;
   subcategory?: string;
   search?: string;
   tag?: string;
@@ -711,11 +748,11 @@ export async function getProductsAction(options?: {
   limit?: number;
 }) {
   try {
-    const page = Math.max(1, options?.page || 1);
-    const limit = Math.max(1, Math.min(100, options?.limit || 12));
+    const page = Math.min(10_000, Math.max(1, Math.floor(Number(options?.page) || 1)));
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(options?.limit) || 12)));
     const offset = (page - 1) * limit;
 
-    const conditions = [
+    const conditions: SQL[] = [
       eq(products.published, true),
       eq(products.status, "approved"),
     ];
@@ -724,28 +761,28 @@ export async function getProductsAction(options?: {
       conditions.push(eq(products.featured, true));
     }
 
-    if (options?.category && options.category !== "all") {
-      conditions.push(eq(products.category, options.category));
+    if (typeof options?.category === "string" && options.category && options.category !== "all") {
+      conditions.push(eq(products.category, options.category.slice(0, 100)));
     }
 
-    if (options?.subcategory && options.subcategory !== "all") {
-      conditions.push(eq(products.subcategory, options.subcategory));
+    if (typeof options?.subcategory === "string" && options.subcategory && options.subcategory !== "all") {
+      conditions.push(eq(products.subcategory, options.subcategory.slice(0, 100)));
     }
 
-    if (options?.priceType && options.priceType !== "all") {
-      if (options.priceType === "free") {
-        conditions.push(or(eq(products.isFree, true), eq(products.price, 0))!);
-      } else if (options.priceType === "paid") {
-        conditions.push(and(eq(products.isFree, false), gt(products.price, 0))!);
-      }
+    if (options?.priceType === "free") {
+      conditions.push(or(eq(products.isFree, true), eq(products.price, 0))!);
+    } else if (options?.priceType === "paid") {
+      conditions.push(and(eq(products.isFree, false), gt(products.price, 0))!);
     }
 
-    if (options?.tag) {
-      conditions.push(ilike(products.tags, `%${options.tag.trim()}%`));
+    const tag = typeof options?.tag === "string" ? options.tag.trim().slice(0, 100) : "";
+    if (tag) {
+      conditions.push(ilike(products.tags, `%${escapeLike(tag)}%`));
     }
 
-    if (options?.search && options.search.trim()) {
-      const term = `%${options.search.trim()}%`;
+    const search = typeof options?.search === "string" ? options.search.trim().slice(0, 200) : "";
+    if (search) {
+      const term = `%${escapeLike(search)}%`;
       conditions.push(
         or(
           ilike(products.title, term),
@@ -758,11 +795,14 @@ export async function getProductsAction(options?: {
 
     const whereClause = and(...conditions);
 
-    // Apply SQL sorting
-    let orderBys: any[] = [desc(products.createdAt)];
+    // SQL sorting; products.id is the final tie-breaker so pagination is stable.
+    let orderBys: SQL[] = [desc(products.createdAt)];
     const sortBy = options?.sortBy || "newest";
     if (sortBy === "rating") {
-      orderBys = [desc(products.rating), desc(products.createdAt)];
+      orderBys = [
+        sql`CASE WHEN ${products.rating} ~ '^[0-9]+([.][0-9]+)?$' THEN (${products.rating})::numeric END DESC NULLS LAST`,
+        desc(products.createdAt),
+      ];
     } else if (sortBy === "price_asc") {
       orderBys = [asc(products.price), desc(products.createdAt)];
     } else if (sortBy === "price_desc") {
@@ -770,15 +810,15 @@ export async function getProductsAction(options?: {
     } else if (sortBy === "featured_premium") {
       orderBys = [desc(products.featured), desc(products.price), desc(products.createdAt)];
     }
+    orderBys.push(desc(products.id));
 
-    // Execute parallel SQL count and paginated query
     const [countResult, productRows] = await Promise.all([
       db
-        .select({ count: sql<number>`count(*)` })
+        .select({ count: sql<number>`count(*)::int` })
         .from(products)
         .where(whereClause),
       db
-        .select()
+        .select(listingColumns)
         .from(products)
         .where(whereClause)
         .orderBy(...orderBys)
@@ -789,7 +829,8 @@ export async function getProductsAction(options?: {
     const total = Number(countResult[0]?.count || 0);
 
     return {
-      products: productRows,
+      // fileUrl is kept in the shape (as null) so callers' types are unchanged.
+      products: productRows.map((row) => ({ ...row, fileUrl: null as string | null })),
       total,
       totalPages: Math.ceil(total / limit),
       currentPage: page,
@@ -806,77 +847,71 @@ export async function getProductsAction(options?: {
 }
 
 export async function approveProductAction(id: string) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
+  await requireAdminUser();
+  assertValidId(id);
 
-  await db
+  const [updated] = await db
     .update(products)
     .set({
       status: "approved",
       published: true,
       updatedAt: new Date(),
     })
-    .where(eq(products.id, id));
+    .where(eq(products.id, id))
+    .returning({ slug: products.slug });
 
   revalidatePath("/");
+  if (updated) revalidatePath(`/products/${updated.slug}`);
   revalidatePath("/admin/products");
   revalidatePath("/admin/approvals");
   return { success: true };
 }
 
 export async function rejectProductAction(id: string) {
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
-    throw new Error("Unauthorized: Admin access required.");
-  }
+  await requireAdminUser();
+  assertValidId(id);
 
-  await db
+  const [updated] = await db
     .update(products)
     .set({
       status: "rejected",
       published: false,
       updatedAt: new Date(),
     })
-    .where(eq(products.id, id));
+    .where(eq(products.id, id))
+    .returning({ slug: products.slug });
 
   revalidatePath("/");
+  if (updated) revalidatePath(`/products/${updated.slug}`);
   revalidatePath("/admin/products");
   revalidatePath("/admin/approvals");
   return { success: true };
 }
 
 export async function rateProductAction(productId: string, ratingValue: number) {
-  if (ratingValue < 1 || ratingValue > 5) {
+  if (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5) {
     throw new Error("Invalid rating value. Must be between 1 and 5.");
   }
+  assertValidId(productId);
 
-  const existing = await db.query.products.findFirst({
-    where: eq(products.id, productId),
-  });
+  // Ratings move public social proof, so anonymous callers are rejected.
+  await requireUser();
 
-  if (!existing) {
+  // Atomic running-average update: no lost writes under concurrent ratings.
+  const [updated] = await db
+    .update(products)
+    .set({
+      rating: sql`round(((coalesce(nullif(${products.rating}, '')::numeric, 5.0) * greatest(${products.ratingCount}, 0)) + ${ratingValue}) / (greatest(${products.ratingCount}, 0) + 1), 1)::text`,
+      ratingCount: sql`greatest(${products.ratingCount}, 0) + 1`,
+    })
+    .where(eq(products.id, productId))
+    .returning({ slug: products.slug, rating: products.rating });
+
+  if (!updated) {
     throw new Error("Product not found");
   }
 
-  const currentCount = existing.ratingCount || 0;
-  const currentRating = parseFloat(existing.rating || "5.0");
-  const currentSum = currentRating * currentCount;
-
-  const newCount = currentCount + 1;
-  const newRating = ((currentSum + ratingValue) / newCount).toFixed(1);
-
-  await db
-    .update(products)
-    .set({
-      rating: newRating,
-      ratingCount: newCount,
-    })
-    .where(eq(products.id, productId));
-
-  revalidatePath(`/products/${existing.slug}`);
+  revalidatePath(`/products/${updated.slug}`);
   revalidatePath("/");
-  return { success: true, rating: newRating };
+  return { success: true, rating: updated.rating };
 }
-

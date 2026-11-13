@@ -1,17 +1,32 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, ExternalLink, Info, Loader2, Trash2, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import { createProductAction, updateProductAction } from "@/lib/actions/products";
 import { uploadImageAction } from "@/lib/actions/upload";
 import { uploadToGithubReleaseAction } from "@/lib/actions/github-releases";
-import { useRouter } from "next/navigation";
+import { formatMoney } from "@/lib/price-utils";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Eye, Save, Upload, Loader2, Info, Image as ImageIcon, Sparkles, Globe, FileUp, FileArchive, Video, Link as LinkIcon, HelpCircle, Settings, FileText } from "lucide-react";
-import Link from "next/link";
-import { marked } from "marked";
-import { Tweet } from "react-tweet";
-import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
+import {
+  errorTextClass,
+  fieldClass,
+  hintClass,
+  labelClass,
+  selectClass,
+  textareaClass,
+} from "@/components/creator/console-ui";
+import { cn } from "@/lib/utils";
+
+// react-tweet is only needed when a creator pastes an X/Twitter link; keep it out of the main bundle.
+const Tweet = dynamic(() => import("react-tweet").then((m) => m.Tweet), {
+  ssr: false,
+  loading: () => <p className="text-xs text-muted-foreground">Loading post preview…</p>,
+});
 
 interface ProductFormProps {
   categories: { id: string; name: string; slug: string }[];
@@ -50,1213 +65,1367 @@ interface ProductFormProps {
   };
 }
 
+type Values = {
+  title: string;
+  slug: string;
+  shortDescription: string;
+  description: string;
+  category: string;
+  subcategory: string;
+  tags: string;
+  price: string;
+  version: string;
+  demoUrl: string;
+  featured: boolean;
+  published: boolean;
+  personal: boolean;
+  showStats: boolean;
+  views: string;
+  downloadsCount: string;
+  saves: string;
+  isFree: boolean;
+  discountPercent: string;
+  affiliateCommissionPercent: string;
+  promoStart: string;
+  promoEnd: string;
+  thumbnailUrl: string;
+  previewGif: string;
+  screenshots: string;
+  videoUrl: string;
+  fileUrl: string;
+  redirectDownload: boolean;
+};
+
+type FieldKey = keyof Values;
+type Errors = Partial<Record<FieldKey, string>>;
+
+const DRAFT_KEY = "scriptlystore_new_product_draft";
+const SUGGESTED_TAGS = ["nextjs", "tailwindcss", "typescript", "react", "saas", "boilerplate", "api", "cloudflare-worker", "ebook"];
+
+/** Platform keeps 5%; affiliate commission comes out of the creator's 95% (see orders.ts). */
+const CREATOR_SPLIT = 0.95;
+
+function formatDateForInput(dateVal: Date | string | null | undefined) {
+  if (!dateVal) return "";
+  const d = new Date(dateVal);
+  if (Number.isNaN(d.getTime())) return "";
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+
+const splitList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+
+const slugify = (val: string) =>
+  val
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+function getEmbedUrl(url: string) {
+  if (!url) return null;
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/);
+  if (yt) return `https://www.youtube.com/embed/${yt[1]}`;
+  const vimeo = url.match(/(?:vimeo\.com\/|player\.vimeo\.com\/video\/)(\d+)/);
+  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
+  const dm = url.match(/(?:dailymotion\.com\/video\/|dai\.ly\/)([^&\s?]+)/);
+  if (dm) return `https://www.dailymotion.com/embed/video/${dm[1]}`;
+  if (url.includes("embed") || url.includes("player")) return url;
+  return null;
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/* ---------- small presentational helpers ---------- */
+
+function Section({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section aria-labelledby={`${id}-title`} className="rounded-2xl border border-border bg-card">
+      <div className="border-b border-border px-4 py-3.5 sm:px-5">
+        <h2 id={`${id}-title`} className="text-sm font-semibold text-foreground">
+          {title}
+        </h2>
+        {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
+      </div>
+      <div className="space-y-5 p-4 sm:p-5">{children}</div>
+    </section>
+  );
+}
+
+function FieldShell({
+  id,
+  label,
+  required,
+  optional,
+  hint,
+  error,
+  aside,
+  children,
+}: {
+  id: string;
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  hint?: React.ReactNode;
+  error?: string;
+  aside?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <label htmlFor={id} className={labelClass}>
+          {label}
+          {required ? (
+            <span aria-hidden className="text-primary">
+              {" "}*
+            </span>
+          ) : null}
+          {optional ? <span className="font-normal text-muted-foreground"> optional</span> : null}
+        </label>
+        {aside}
+      </div>
+      {children}
+      {error ? (
+        <p id={`${id}-error`} className={errorTextClass}>
+          {error}
+        </p>
+      ) : hint ? (
+        <p id={`${id}-hint`} className={hintClass}>
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function LengthMeter({ length, min, max }: { length: number; min: number; max: number }) {
+  const tone =
+    length === 0 ? "text-muted-foreground" : length < min ? "text-muted-foreground" : length <= max ? "text-success" : "text-destructive";
+  const note = length === 0 ? "" : length < min ? " · short" : length <= max ? " · good for search" : " · may be cut off";
+  return (
+    <span className={cn("tabular text-xs", tone)}>
+      {length}/{max}
+      {note}
+    </span>
+  );
+}
+
+function SwitchRow({
+  id,
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <label htmlFor={id} className={cn(labelClass, "cursor-pointer")}>
+          {label}
+        </label>
+        <p id={`${id}-desc`} className="mt-0.5 text-xs text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-describedby={`${id}-desc`}
+        className="mt-0.5"
+      />
+    </div>
+  );
+}
+
+function UploadButton({
+  label,
+  accept,
+  multiple,
+  busy,
+  disabled,
+  onFiles,
+  full,
+}: {
+  label: string;
+  accept?: string;
+  multiple?: boolean;
+  busy: boolean;
+  disabled?: boolean;
+  onFiles: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  full?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        "relative inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-input bg-card px-3 text-sm font-medium text-foreground transition-colors hover:border-foreground/25 hover:bg-secondary focus-within:ring-2 focus-within:ring-ring",
+        full && "w-full",
+        (busy || disabled) && "pointer-events-none opacity-60"
+      )}
+    >
+      <input
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        disabled={busy || disabled}
+        onChange={(e) => {
+          onFiles(e);
+          e.target.value = "";
+        }}
+        className="sr-only"
+      />
+      {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" strokeWidth={1.75} />}
+      <span className={full ? "" : "sr-only sm:not-sr-only"}>{busy ? "Uploading…" : label}</span>
+    </label>
+  );
+}
+
+/* ---------- main form ---------- */
+
 export default function ProductForm({ categories, subcategories, isCreatorConsole = false, initialData }: ProductFormProps) {
   const isEdit = !!initialData;
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [submitMode, setSubmitMode] = useState<"publish" | "draft" | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Errors>({});
   const [uploading, setUploading] = useState<string | null>(null);
-
-  const [title, setTitle] = useState(initialData?.title || "");
-  const [slug, setSlug] = useState(initialData?.slug || "");
-  const [shortDescription, setShortDescription] = useState(initialData?.shortDescription || "");
-  const [description, setDescription] = useState(initialData?.description || "");
   const [descTab, setDescTab] = useState<"write" | "preview">("write");
-  const [category, setCategory] = useState(initialData?.category || categories[0]?.slug || "");
-  const [subcategory, setSubcategory] = useState(initialData?.subcategory || "");
-  const [tags, setTags] = useState(initialData?.tags || "");
-  const [price, setPrice] = useState(initialData ? (initialData.price / 100).toString() : "");
-  const [version, setVersion] = useState(initialData?.version || "1.0.0");
-  const [demoUrl, setDemoUrl] = useState(initialData?.demoUrl || "");
-  const [featured, setFeatured] = useState(initialData?.featured || false);
-  const [published, setPublished] = useState(initialData ? initialData.published : true);
-  const [personal, setPersonal] = useState(initialData?.personal || false);
-  const [showStats, setShowStats] = useState(initialData?.showStats || false);
-  const [views, setViews] = useState(initialData?.views?.toString() || "0");
-  const [downloadsCount, setDownloadsCount] = useState(initialData?.downloadsCount?.toString() || "0");
-  const [saves, setSaves] = useState(initialData?.saves?.toString() || "0");
-  
-  const [isFree, setIsFree] = useState(initialData?.isFree || false);
-  const [discountPercent, setDiscountPercent] = useState(initialData?.discountPercent?.toString() || "0");
-  const [affiliateCommissionPercent, setAffiliateCommissionPercent] = useState(initialData?.affiliateCommissionPercent?.toString() || "30");
-  
-  const formatDateForInput = (dateVal: any) => {
-    if (!dateVal) return "";
-    try {
-      const d = new Date(dateVal);
-      const tzOffset = d.getTimezoneOffset() * 60000;
-      return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
-    } catch {
-      return "";
-    }
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
+
+  const [v, setV] = useState<Values>(() => ({
+    title: initialData?.title || "",
+    slug: initialData?.slug || "",
+    shortDescription: initialData?.shortDescription || "",
+    description: initialData?.description || "",
+    category: initialData?.category || categories[0]?.slug || "",
+    subcategory: initialData?.subcategory || "",
+    tags: initialData?.tags || "",
+    price: initialData ? String(initialData.price / 100) : "",
+    version: initialData?.version || "1.0.0",
+    demoUrl: initialData?.demoUrl || "",
+    featured: initialData?.featured || false,
+    published: initialData ? initialData.published : true,
+    personal: initialData?.personal || false,
+    showStats: initialData?.showStats || false,
+    views: initialData?.views?.toString() || "0",
+    downloadsCount: initialData?.downloadsCount?.toString() || "0",
+    saves: initialData?.saves?.toString() || "0",
+    isFree: initialData?.isFree || false,
+    discountPercent: initialData?.discountPercent?.toString() || "0",
+    affiliateCommissionPercent: initialData?.affiliateCommissionPercent?.toString() || "30",
+    promoStart: formatDateForInput(initialData?.promoStart),
+    promoEnd: formatDateForInput(initialData?.promoEnd),
+    thumbnailUrl: initialData?.thumbnail || "",
+    previewGif: initialData?.previewGif || "",
+    screenshots: initialData?.screenshots || "",
+    videoUrl: initialData?.videoUrl || "",
+    fileUrl: initialData?.fileUrl || "",
+    redirectDownload: initialData ? initialData.redirectDownload ?? true : true,
+  }));
+
+  const set = <K extends FieldKey>(key: K, value: Values[K]) => {
+    setV((prev) => ({ ...prev, [key]: value }));
+    setErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
   };
 
-  const [promoStart, setPromoStart] = useState(formatDateForInput(initialData?.promoStart));
-  const [promoEnd, setPromoEnd] = useState(formatDateForInput(initialData?.promoEnd));
-  
-  const [thumbnailUrl, setThumbnailUrl] = useState(initialData?.thumbnail || "");
-  const [previewGif, setPreviewGif] = useState(initialData?.previewGif || "");
-  const [screenshots, setScreenshots] = useState(initialData?.screenshots || "");
-  const [videoUrl, setVideoUrl] = useState(initialData?.videoUrl || "");
-  const [fileUrl, setFileUrl] = useState(initialData?.fileUrl || "");
-  const [redirectDownload, setRedirectDownload] = useState(initialData ? (initialData.redirectDownload ?? true) : true);
-
-  const isTweet = videoUrl?.includes("twitter.com") || videoUrl?.includes("x.com");
-  const tweetId = isTweet ? videoUrl.match(/status\/(\d+)/)?.[1] : null;
-
-  // Resolve video embed URLs for previews
-  const getEmbedUrl = (url: string) => {
-    if (!url) return null;
-    
-    // YouTube
-    const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/);
-    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
-
-    // Vimeo
-    const vimeoMatch = url.match(/(?:vimeo\.com\/|player\.vimeo\.com\/video\/)(\d+)/);
-    if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
-
-    // Dailymotion
-    const dmMatch = url.match(/(?:dailymotion\.com\/video\/|dai\.ly\/)([^&\s?]+)/);
-    if (dmMatch) return `https://www.dailymotion.com/embed/video/${dmMatch[1]}`;
-
-    // Return raw for other embedded targets
-    if (url.includes("embed") || url.includes("player")) return url;
-
-    return null;
-  };
-
-  const resolvedEmbedUrl = getEmbedUrl(videoUrl);
-  const isDirectVideo = videoUrl && (videoUrl.endsWith(".mp4") || videoUrl.endsWith(".webm") || videoUrl.endsWith(".ogv"));
-
-  // Load from localStorage on mount (only for New Product form)
+  /* Draft persistence (new product only). Browser storage can throw in private mode. */
   useEffect(() => {
     if (isEdit) return;
     try {
-      const saved = localStorage.getItem("scriptlystore_new_product_draft");
-      if (saved) {
-        const data = JSON.parse(saved);
-        if (data.title) setTitle(data.title);
-        if (data.slug) setSlug(data.slug);
-        if (data.category) setCategory(data.category);
-        if (data.subcategory) setSubcategory(data.subcategory);
-        if (data.price) setPrice(data.price);
-        if (data.shortDescription) setShortDescription(data.shortDescription);
-        if (data.description) setDescription(data.description);
-        if (data.thumbnailUrl) setThumbnailUrl(data.thumbnailUrl);
-        if (data.previewGif) setPreviewGif(data.previewGif);
-        if (data.screenshots) setScreenshots(data.screenshots);
-        if (data.videoUrl) setVideoUrl(data.videoUrl);
-        if (data.fileUrl) setFileUrl(data.fileUrl);
-        if (data.demoUrl) setDemoUrl(data.demoUrl);
-        if (data.tags) setTags(data.tags);
-        if (data.version) setVersion(data.version);
-        if (data.featured !== undefined) setFeatured(data.featured);
-        if (data.published !== undefined) setPublished(data.published);
-        if (data.personal !== undefined) setPersonal(data.personal);
-        if (data.isFree !== undefined) setIsFree(data.isFree);
-        if (data.discountPercent !== undefined) setDiscountPercent(data.discountPercent);
-        if (data.affiliateCommissionPercent !== undefined) setAffiliateCommissionPercent(data.affiliateCommissionPercent);
-        if (data.promoStart) setPromoStart(data.promoStart);
-        if (data.promoEnd) setPromoEnd(data.promoEnd);
-        if (data.redirectDownload !== undefined) setRedirectDownload(data.redirectDownload);
-      }
-    } catch (err) {
-      console.error("Failed to load draft from localStorage:", err);
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (!saved) return;
+      const data = JSON.parse(saved) as Partial<Values>;
+      setV((prev) => {
+        const next = { ...prev };
+        (Object.keys(prev) as FieldKey[]).forEach((k) => {
+          const val = data[k];
+          if (val !== undefined && val !== "" && typeof val === typeof prev[k]) {
+            (next as Record<string, unknown>)[k] = val;
+          }
+        });
+        return next;
+      });
+      setDraftRestored(true);
+    } catch {
+      /* ignore unreadable drafts */
     }
   }, [isEdit]);
 
-  // Save to localStorage when values change
   useEffect(() => {
     if (isEdit) return;
-    const data = {
-      title,
-      slug,
-      category,
-      subcategory,
-      price,
-      shortDescription,
-      description,
-      thumbnailUrl,
-      previewGif,
-      screenshots,
-      videoUrl,
-      fileUrl,
-      demoUrl,
-      tags,
-      version,
-      featured,
-      published,
-      personal,
-      isFree,
-      discountPercent,
-      affiliateCommissionPercent,
-      promoStart,
-      promoEnd,
-      redirectDownload,
-    };
-    localStorage.setItem("scriptlystore_new_product_draft", JSON.stringify(data));
-  }, [
-    isEdit, title, slug, category, subcategory, price, shortDescription, 
-    description, thumbnailUrl, previewGif, screenshots, videoUrl, 
-    fileUrl, demoUrl, tags, version, featured, published, personal, 
-    isFree, discountPercent, affiliateCommissionPercent, promoStart, promoEnd, redirectDownload
-  ]);
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(v));
+      } catch {
+        /* storage unavailable */
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [isEdit, v]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, targetSetter: (val: string) => void, fieldName: string, forceRelease = false) => {
+  /* Markdown preview: load the parser only when the preview tab is opened. */
+  useEffect(() => {
+    if (descTab !== "preview") return;
+    let cancelled = false;
+    import("marked").then(({ marked }) => {
+      const html = marked.parse(v.description || "*Nothing written yet.*", { async: false }) as string;
+      if (!cancelled) setPreviewHtml(html);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [descTab, v.description]);
+
+  const filteredSubcategories = useMemo(
+    () => subcategories.filter((sub) => sub.categoryId === v.category),
+    [subcategories, v.category]
+  );
+
+  const screenshotList = splitList(v.screenshots);
+  const tagList = splitList(v.tags);
+
+  const embedUrl = getEmbedUrl(v.videoUrl);
+  const isDirectVideo = /\.(mp4|webm|ogv)(\?.*)?$/i.test(v.videoUrl);
+  const tweetId =
+    v.videoUrl.includes("twitter.com") || v.videoUrl.includes("x.com")
+      ? v.videoUrl.match(/status\/(\d+)/)?.[1] ?? null
+      : null;
+
+  /* Earnings preview — mirrors the checkout split in src/lib/actions/orders.ts. */
+  const pricing = useMemo(() => {
+    const listPaise = Math.round((parseFloat(v.price) || 0) * 100);
+    const discount = v.isFree ? 100 : Math.min(Math.max(parseFloat(v.discountPercent) || 0, 0), 100);
+    const salePaise = Math.max(listPaise - Math.round(listPaise * (discount / 100)), 0);
+    const commission = Math.min(Math.max(parseFloat(v.affiliateCommissionPercent) || 30, 5), 50);
+    const platformFee = Math.round(salePaise * (1 - CREATOR_SPLIT));
+    const direct = Math.round(salePaise * CREATOR_SPLIT);
+    const referred = Math.round(salePaise * Math.max(CREATOR_SPLIT - commission / 100, 0));
+    const affiliate = Math.max(salePaise - platformFee - referred, 0);
+    return { listPaise, salePaise, discount, commission, platformFee, direct, referred, affiliate };
+  }, [v.price, v.discountPercent, v.isFree, v.affiliateCommissionPercent]);
+
+  const handleUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: "thumbnailUrl" | "previewGif" | "screenshots" | "videoUrl" | "fileUrl",
+    forceRelease = false
+  ) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    setUploading(fieldName);
-    setError(null);
-
-    const isMulti = fieldName === "screenshots";
+    setUploading(field);
+    setFormError(null);
     const uploadedUrls: string[] = [];
 
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (const file of Array.from(files)) {
         const formData = new FormData();
         formData.append("file", file);
 
         let data;
-        // Auto fallback to Release upload for files > 15MB or if forceRelease is true
+        // Files over 15MB (or forced, e.g. ZIP packages) go through the GitHub Release upload.
         if (forceRelease || file.size > 15 * 1024 * 1024) {
           data = await uploadToGithubReleaseAction(formData);
         } else {
           data = await uploadImageAction(formData);
-          if (data && 'error' in data) {
-            console.warn("Standard upload failed, falling back to GitHub Release upload:", data.error);
+          if (data && "error" in data) {
             data = await uploadToGithubReleaseAction(formData);
           }
         }
 
-        if (data && 'url' in data && data.url) {
+        if (data && "url" in data && data.url) {
           uploadedUrls.push(data.url);
-        } else if (data && 'error' in data) {
+        } else if (data && "error" in data) {
           toast.error(`Upload failed for ${file.name}: ${data.error}`);
         }
       }
 
       if (uploadedUrls.length > 0) {
-        if (isMulti) {
-          const current = screenshots ? screenshots.split(",").map(s => s.trim()).filter(Boolean) : [];
-          targetSetter([...current, ...uploadedUrls].join(", "));
+        if (field === "screenshots") {
+          setV((prev) => ({ ...prev, screenshots: [...splitList(prev.screenshots), ...uploadedUrls].join(", ") }));
         } else {
-          targetSetter(uploadedUrls[0]);
+          set(field, uploadedUrls[0]);
         }
-        toast.success(`Successfully uploaded ${uploadedUrls.length} file(s)!`);
+        toast.success(uploadedUrls.length === 1 ? "File uploaded." : `${uploadedUrls.length} files uploaded.`);
       }
-    } catch (err: any) {
-      setError("Upload failed: " + (err.message || "Please try again."));
-      toast.error("Upload failed: " + (err.message || "Please try again."));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Please try again.";
+      setFormError(`Upload failed: ${message}`);
+      toast.error(`Upload failed: ${message}`);
     } finally {
       setUploading(null);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setError(null);
+  const validate = (isDraft: boolean): Errors => {
+    const e: Errors = {};
+    if (!v.title.trim()) e.title = "Give your product a title.";
+    if (!v.slug.trim()) {
+      if (!isDraft) e.slug = "Add a URL slug.";
+    } else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v.slug)) {
+      e.slug = "Use lowercase letters, numbers and single hyphens.";
+    }
+    if (!v.category) e.category = "Choose a category.";
+    if (!isDraft) {
+      if (!v.shortDescription.trim()) e.shortDescription = "Write a one-line summary.";
+      if (!v.description.trim()) e.description = "Describe what buyers get.";
+      if (!v.fileUrl.trim()) e.fileUrl = "Add the package buyers will download.";
+    }
+    if (v.fileUrl && !isHttpUrl(v.fileUrl)) e.fileUrl = "Enter a full URL starting with https://";
+    if (v.demoUrl && !isHttpUrl(v.demoUrl)) e.demoUrl = "Enter a full URL starting with https://";
+    if (v.thumbnailUrl && !isHttpUrl(v.thumbnailUrl) && !v.thumbnailUrl.startsWith("/"))
+      e.thumbnailUrl = "Enter an image URL starting with https://";
+    const price = parseFloat(v.price);
+    if (!v.isFree && !(isDraft && v.price === "")) {
+      if (v.price === "" || Number.isNaN(price)) e.price = "Enter a price in US dollars, or make the product free.";
+      else if (price < 0) e.price = "Price can’t be negative.";
+      else if (price === 0) e.price = "Enter a price above $0, or turn on “Free”.";
+    }
+    const discount = parseFloat(v.discountPercent || "0");
+    if (!v.isFree && (Number.isNaN(discount) || discount < 0 || discount > 100))
+      e.discountPercent = "Use a number from 0 to 100.";
+    const commission = parseFloat(v.affiliateCommissionPercent);
+    if (Number.isNaN(commission) || commission < 5 || commission > 50)
+      e.affiliateCommissionPercent = "Use a number from 5 to 50.";
+    if (v.promoStart && v.promoEnd && new Date(v.promoEnd) <= new Date(v.promoStart))
+      e.promoEnd = "End must be after the start.";
+    return e;
+  };
 
-    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
-    const isDraft = submitter?.getAttribute("data-draft") === "true";
+  const focusFirstError = (e: Errors) => {
+    const first = Object.keys(e)[0];
+    if (!first) return;
+    const el = formRef.current?.querySelector<HTMLElement>(`#pf-${first}`);
+    el?.focus();
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
 
-    const formData = new FormData(e.currentTarget);
-    formData.set("title", title);
-    formData.set("slug", slug);
-    formData.set("shortDescription", shortDescription);
-    formData.set("description", description);
-    formData.set("category", category);
-    formData.set("price", price);
-    formData.set("version", version);
-    formData.set("tags", tags);
-    formData.set("demoUrl", demoUrl);
-    formData.set("featured", featured ? "true" : "false");
-    formData.set("published", isDraft ? "false" : (published ? "true" : "false"));
-    formData.set("personal", personal ? "true" : "false");
-    formData.set("thumbnail", thumbnailUrl);
-    formData.set("previewGif", previewGif);
-    formData.set("screenshots", screenshots);
-    formData.set("videoUrl", videoUrl);
-    formData.set("fileUrl", fileUrl);
-    formData.set("redirectDownload", redirectDownload ? "true" : "false");
-    formData.set("subcategory", subcategory);
-    formData.set("isFree", isFree ? "true" : "false");
-    formData.set("discountPercent", isFree ? "0" : discountPercent);
-    formData.set("promoStart", promoStart);
-    formData.set("promoEnd", promoEnd);
-    formData.set("showStats", showStats ? "true" : "false");
-    formData.set("views", views);
-    formData.set("downloadsCount", downloadsCount);
-    formData.set("saves", saves);
-    formData.set("affiliateCommissionPercent", affiliateCommissionPercent);
+  const submit = (isDraft: boolean) => {
+    setFormError(null);
+    const nextErrors = validate(isDraft);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      focusFirstError(nextErrors);
+      return;
+    }
 
+    const fd = new FormData();
+    fd.set("title", v.title.trim());
+    fd.set("slug", v.slug.trim());
+    fd.set("shortDescription", v.shortDescription.trim());
+    fd.set("description", v.description);
+    fd.set("category", v.category);
+    fd.set("subcategory", v.subcategory);
+    fd.set("price", v.isFree ? "0" : v.price);
+    fd.set("version", v.version);
+    fd.set("tags", tagList.join(", "));
+    fd.set("demoUrl", v.demoUrl);
+    fd.set("featured", v.featured ? "true" : "false");
+    fd.set("published", isDraft ? "false" : v.published ? "true" : "false");
+    fd.set("personal", v.personal ? "true" : "false");
+    fd.set("thumbnail", v.thumbnailUrl);
+    fd.set("previewGif", v.previewGif);
+    fd.set("screenshots", v.screenshots);
+    fd.set("videoUrl", v.videoUrl);
+    fd.set("fileUrl", v.fileUrl);
+    fd.set("redirectDownload", v.redirectDownload ? "true" : "false");
+    fd.set("isFree", v.isFree ? "true" : "false");
+    fd.set("discountPercent", v.isFree ? "0" : v.discountPercent || "0");
+    fd.set("promoStart", v.promoStart);
+    fd.set("promoEnd", v.promoEnd);
+    fd.set("showStats", v.showStats ? "true" : "false");
+    fd.set("views", v.views);
+    fd.set("downloadsCount", v.downloadsCount);
+    fd.set("saves", v.saves);
+    fd.set("affiliateCommissionPercent", v.affiliateCommissionPercent);
+
+    setSubmitMode(isDraft ? "draft" : "publish");
     startTransition(async () => {
       try {
-        let result;
-        if (isEdit && initialData) {
-          result = await updateProductAction(initialData.id, formData);
-        } else {
-          result = await createProductAction(formData);
-        }
+        const result =
+          isEdit && initialData ? await updateProductAction(initialData.id, fd) : await createProductAction(fd);
 
         if (result.success) {
           if (!isEdit) {
-            localStorage.removeItem("scriptlystore_new_product_draft");
+            try {
+              localStorage.removeItem(DRAFT_KEY);
+            } catch {
+              /* storage unavailable */
+            }
           }
-          toast.success(isEdit ? "Product updated successfully!" : "Product listed successfully!");
+          toast.success(
+            isEdit
+              ? isCreatorConsole
+                ? "Changes saved and sent for review."
+                : "Product updated."
+              : isCreatorConsole
+                ? "Submitted for review."
+                : "Product created."
+          );
           router.push(isCreatorConsole ? "/creator/products" : "/admin/products");
           router.refresh();
         } else {
-          setError((result as any).error || "Action failed.");
+          setFormError((result as { error?: string }).error || "Could not save this product. Try again.");
         }
-      } catch (err: any) {
-        setError(err.message || "An unexpected error occurred.");
+      } catch (err) {
+        setFormError(err instanceof Error && err.message ? err.message : "Could not save this product. Try again.");
+      } finally {
+        setSubmitMode(null);
       }
     });
   };
 
-  const handleTitleChange = (val: string) => {
-    setTitle(val);
-    if (!isEdit) {
-      setSlug(
-        val
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/(^-|-$)/g, "")
-      );
+  const discardDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* storage unavailable */
     }
+    window.location.reload();
   };
 
-  // Filter subcategories for the selected category
-  const filteredSubcategories = subcategories.filter(sub => sub.categoryId === category);
+  const addTag = (raw: string) => {
+    const tag = raw.trim().toLowerCase().replace(/,/g, "");
+    if (!tag || tagList.includes(tag)) return;
+    set("tags", [...tagList, tag].join(", "));
+  };
+
+  const moveScreenshot = (from: number, to: number) => {
+    if (to < 0 || to >= screenshotList.length) return;
+    const next = [...screenshotList];
+    [next[from], next[to]] = [next[to], next[from]];
+    set("screenshots", next.join(", "));
+  };
+
+  const err = (k: FieldKey) =>
+    errors[k]
+      ? { "aria-invalid": true as const, "aria-describedby": `pf-${k}-error` }
+      : { "aria-describedby": `pf-${k}-hint` };
+
+  const primaryLabel = isEdit
+    ? isCreatorConsole
+      ? "Save & resubmit"
+      : "Save changes"
+    : isCreatorConsole
+      ? "Submit for review"
+      : "Publish product";
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 select-none max-w-6xl mx-auto px-4 py-8">
-      {/* 1. Header Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-neutral-800 pb-6 gap-4">
-        <div className="space-y-1">
-          <Button asChild variant="ghost" size="sm" className="text-neutral-400 hover:text-white -ml-3">
-            <Link href={isCreatorConsole ? "/creator/products" : "/admin/products"}>
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Catalog
-            </Link>
-          </Button>
-          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
-            {isEdit ? "Configure Product" : "Launch Digital Asset"}
-            <Badge variant="outline" className="rounded-full text-[9px] uppercase px-3.5 py-0.5 border-neutral-700 bg-neutral-900/60 text-neutral-400">
-              {isEdit ? "Edit Mode" : "New Draft"}
-            </Badge>
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {isEdit && initialData?.slug && (
-            <Link
-              href={`/products/${initialData.slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-border/70 bg-card px-3.5 text-xs font-bold text-foreground transition-colors hover:bg-muted"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              View Post
-            </Link>
-          )}
-
-          {/* Hire Me helper link */}
-          <Link
-            href="/hire-me"
-            className="flex items-center gap-1.5 text-xs font-bold text-[#1CB0F6] hover:text-[#1CB0F6]/80 bg-[#1CB0F6]/10 border border-[#1CB0F6]/20 px-3.5 py-2 rounded-xl transition-all"
-          >
-            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-            Hire Developer
-          </Link>
-
-          {/* Blogger post helper link */}
-          <a
-            href="https://www.blogger.com/blog/posts/446251549562029884"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs font-bold text-amber-500 hover:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3.5 py-2 rounded-xl transition-all"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Blogger Post
-          </a>
-
-          {!isEdit && (
-            <Button
-              type="submit"
-              data-draft="true"
-              variant="outline"
-              disabled={isPending}
-              className="rounded-xl font-bold uppercase tracking-wider text-[10px] h-10 border-neutral-800 hover:bg-neutral-900 cursor-pointer"
-            >
-              Save Draft
-            </Button>
-          )}
-          
-          <Button
-            type="submit"
-            disabled={isPending}
-            className="rounded-xl font-bold uppercase tracking-wider text-[10px] bg-primary text-white hover:bg-primary/90 h-10 px-6 cursor-pointer"
-          >
-            {isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-            {isEdit ? "Apply Updates" : "Publish Code"}
+    <form
+      ref={formRef}
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit(false);
+      }}
+      className="space-y-6"
+    >
+      {draftRestored && !isEdit ? (
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <p className="text-muted-foreground">Restored your unsaved draft from this browser.</p>
+          <Button type="button" variant="ghost" size="sm" onClick={discardDraft} className="self-start sm:self-auto">
+            Start over
           </Button>
         </div>
-      </div>
+      ) : null}
 
-      {error && (
-        <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs font-bold">
-          {error}
+      {isCreatorConsole ? (
+        <div className="flex items-start gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 text-sm sm:px-5">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+          <p className="text-muted-foreground">
+            {isEdit
+              ? "Saving changes sends this listing back to review. It stays unlisted until a moderator approves it."
+              : "Every submission is reviewed by Scriptly moderators before it appears in the marketplace."}{" "}
+            Need help packaging?{" "}
+            <Link href="/hire-me" className="text-primary underline-offset-4 hover:underline">
+              Hire a developer
+            </Link>
+            .
+          </p>
         </div>
-      )}
+      ) : null}
 
-      {/* 2. Main Two-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        {/* Left Column: Basic Details & Text Contents */}
-        <div className="lg:col-span-7 space-y-8">
-          
-          {/* Section A: Product Identification */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-6 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              General Details
-            </h3>
+      {formError ? (
+        <div role="alert" className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive sm:px-5">
+          {formError}
+        </div>
+      ) : null}
 
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Product Title *</label>
-                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
-                  title.length === 0 ? "bg-neutral-800/40 text-neutral-500" :
-                  title.length < 30 ? "bg-amber-500/10 text-amber-500" :
-                  title.length <= 60 ? "bg-emerald-500/10 text-emerald-500" :
-                  "bg-rose-500/10 text-rose-500"
-                }`}>
-                  {title.length} / 60 chars {
-                    title.length === 0 ? "" :
-                    title.length < 30 ? "• Too Short" :
-                    title.length <= 60 ? "• Optimal SEO" :
-                    "• May Truncate"
-                  }
-                </span>
-              </div>
-              <input 
-                type="text" 
-                value={title} 
-                onChange={(e) => handleTitleChange(e.target.value)} 
-                placeholder="e.g. Fizzi - A 3D eCommerce landing page built with NextJS" 
-                required 
-                className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/45 focus:border-neutral-700 transition-all font-semibold" 
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+        {/* Left column */}
+        <div className="space-y-6 lg:col-span-7">
+          <Section id="pf-basics" title="Basics" description="What it is and where buyers find it.">
+            <FieldShell
+              id="pf-title"
+              label="Title"
+              required
+              error={errors.title}
+              aside={<LengthMeter length={v.title.length} min={30} max={60} />}
+            >
+              <input
+                id="pf-title"
+                type="text"
+                value={v.title}
+                onChange={(e) => {
+                  const title = e.target.value;
+                  setV((prev) => ({ ...prev, title, slug: isEdit ? prev.slug : slugify(title) }));
+                  setErrors((prev) => ({ ...prev, title: undefined, slug: isEdit ? prev.slug : undefined }));
+                }}
+                placeholder="Fizzi — 3D ecommerce landing page in Next.js"
+                className={fieldClass}
+                {...err("title")}
               />
-            </div>
+            </FieldShell>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Static Slug (URL Path) *</label>
-              <input 
-                type="text" 
-                value={slug} 
-                onChange={(e) => setSlug(e.target.value)} 
-                placeholder="fizzi-3d-ecommerce-landing-page" 
-                required 
-                className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/45 focus:border-neutral-700 transition-all font-mono" 
+            <FieldShell
+              id="pf-slug"
+              label="URL slug"
+              required
+              error={errors.slug}
+              hint={
+                <>
+                  scriptly.store/products/<span className="font-mono text-foreground">{v.slug || "your-product"}</span>
+                </>
+              }
+            >
+              <input
+                id="pf-slug"
+                type="text"
+                value={v.slug}
+                onChange={(e) => set("slug", e.target.value.toLowerCase().replace(/\s+/g, "-"))}
+                placeholder="fizzi-3d-ecommerce-landing-page"
+                autoComplete="off"
+                spellCheck={false}
+                className={cn(fieldClass, "font-mono")}
+                {...err("slug")}
               />
-            </div>
+            </FieldShell>
 
-            {/* Categorization Dropdowns */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Parent Category *</label>
-                <select 
-                  value={category} 
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FieldShell id="pf-category" label="Category" required error={errors.category}>
+                <select
+                  id="pf-category"
+                  value={v.category}
                   onChange={(e) => {
-                    setCategory(e.target.value);
-                    setSubcategory(""); // Reset subcategory on change
+                    setV((prev) => ({ ...prev, category: e.target.value, subcategory: "" }));
+                    setErrors((prev) => ({ ...prev, category: undefined }));
                   }}
-                  className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700 cursor-pointer"
+                  className={selectClass}
+                  {...err("category")}
                 >
+                  {categories.length === 0 ? <option value="">No categories available</option> : null}
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.slug}>
                       {cat.name}
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Subcategory (Optional)</label>
-                <select 
-                  value={subcategory} 
-                  onChange={(e) => setSubcategory(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700 cursor-pointer"
+              </FieldShell>
+              <FieldShell id="pf-subcategory" label="Subcategory" optional>
+                <select
+                  id="pf-subcategory"
+                  value={v.subcategory}
+                  onChange={(e) => set("subcategory", e.target.value)}
+                  disabled={filteredSubcategories.length === 0}
+                  className={selectClass}
                 >
-                  <option value="">No subcategory</option>
+                  <option value="">None</option>
                   {filteredSubcategories.map((sub) => (
                     <option key={sub.id} value={sub.slug}>
                       {sub.name}
                     </option>
                   ))}
                 </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Section B: Pricing, Payouts, License */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-6 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <Globe className="w-4 h-4 text-emerald-500" />
-              Pricing & Promotions
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Price (USD) *</label>
-                <input 
-                  type="number" 
-                  step="0.01" 
-                  min="0" 
-                  value={price} 
-                  onChange={(e) => {
-                    setPrice(e.target.value);
-                    if (parseFloat(e.target.value) === 0) setIsFree(true);
-                    else setIsFree(false);
-                  }} 
-                  placeholder="29.99" 
-                  required 
-                  className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700" 
-                />
-              </div>
-
-              {!isCreatorConsole && (
-                <div className="flex items-center justify-between p-4 rounded-xl border border-neutral-800 bg-neutral-950/60">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-bold text-neutral-300 uppercase">First-Party / Personal</h4>
-                    <p className="text-[9px] text-neutral-500">Listed under ScriptlyHQ directly</p>
-                  </div>
-                  <input 
-                    type="checkbox" 
-                    checked={personal} 
-                    onChange={(e) => setPersonal(e.target.checked)} 
-                    className="w-4.5 h-4.5 rounded accent-primary cursor-pointer" 
-                  />
-                </div>
-              )}
+              </FieldShell>
             </div>
 
-            {/* Promotions Options */}
-            <div className="border-t border-neutral-800/60 pt-5 space-y-4">
-              <h4 className="text-[10px] font-black uppercase tracking-wider text-purple-400">Discounts & Limited Campaigns</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex items-center justify-between p-4 rounded-xl border border-neutral-800 bg-neutral-950/60">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-bold text-neutral-300 uppercase">Make Product Free</h4>
-                    <p className="text-[9px] text-neutral-500">Customers bypass payments entirely</p>
-                  </div>
-                  <input 
-                    type="checkbox" 
-                    checked={isFree} 
-                    onChange={(e) => {
-                      setIsFree(e.target.checked);
-                      if (e.target.checked) setPrice("0.00");
-                    }} 
-                    className="w-4.5 h-4.5 rounded accent-white cursor-pointer" 
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Discount Percentage (%)</label>
-                  <input 
-                    type="number" 
-                    min="0" 
-                    max="100" 
-                    disabled={isFree} 
-                    value={isFree ? "0" : discountPercent} 
-                    onChange={(e) => setDiscountPercent(e.target.value)} 
-                    placeholder="e.g. 20" 
-                    className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700 disabled:opacity-50" 
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Promo Start Date</label>
-                  <input 
-                    type="datetime-local" 
-                    value={promoStart} 
-                    onChange={(e) => setPromoStart(e.target.value)} 
-                    className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Promo End Date</label>
-                  <input 
-                    type="datetime-local" 
-                    value={promoEnd} 
-                    onChange={(e) => setPromoEnd(e.target.value)} 
-                    className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700" 
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Affiliate Options */}
-            <div className="border-t border-neutral-800/60 pt-5 space-y-4">
-              <h4 className="text-[10px] font-black uppercase tracking-wider text-emerald-400">Affiliate Referral Configuration</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Affiliate Commission (%)</label>
-                  <input 
-                    type="number" 
-                    min="5" 
-                    max="50" 
-                    value={affiliateCommissionPercent} 
-                    onChange={(e) => setAffiliateCommissionPercent(e.target.value)} 
-                    placeholder="e.g. 10 (Default)" 
-                    className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700" 
-                  />
-                  <p className="text-[8px] text-neutral-500 font-medium">
-                    Specify the percentage rate paid out to referring affiliates (5% to 50%).
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Pricing & Earnings Calculator */}
-            {(() => {
-              const numPrice = parseFloat(price) || 0;
-              const numDiscount = isFree ? 0 : (parseFloat(discountPercent) || 0);
-              const discountedPrice = numPrice * (1 - numDiscount / 100);
-              const numCommissionPercent = parseFloat(affiliateCommissionPercent) || 30;
-              const affiliatePayout = discountedPrice * (numCommissionPercent / 100);
-              const platformFee = discountedPrice * 0.10; // 10%
-              const creatorNetNormal = discountedPrice - platformFee;
-              const creatorNetReferred = discountedPrice - platformFee - affiliatePayout;
-
-              return (
-                <div className="border-t border-neutral-800/60 pt-5 space-y-3">
-                  <h4 className="text-[10px] font-black uppercase tracking-wider text-cyan-400">Live Earnings Calculator</h4>
-                  <div className="p-4 rounded-xl border border-neutral-800 bg-neutral-950/60 space-y-3 text-xs leading-relaxed font-semibold">
-                    <div className="flex justify-between items-center text-neutral-400">
-                      <span>Customer Checkout Cost:</span>
-                      <span className="font-bold text-white">
-                        {numDiscount > 0 ? (
-                          <>
-                            <span className="line-through text-neutral-600 mr-1.5">${numPrice.toFixed(2)}</span>
-                            <span className="text-emerald-500 font-extrabold">${discountedPrice.toFixed(2)}</span>
-                          </>
-                        ) : (
-                          `$${numPrice.toFixed(2)}`
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-neutral-400">
-                      <span>Platform Fee (10%):</span>
-                      <span className="font-bold text-rose-500">-${platformFee.toFixed(2)}</span>
-                    </div>
-                    {numCommissionPercent > 0 && (
-                      <div className="flex justify-between items-center text-neutral-400 border-b border-neutral-850 pb-2">
-                        <span>Affiliate Commission ({numCommissionPercent}%):</span>
-                        <span className="font-bold text-purple-400">-${affiliatePayout.toFixed(2)}</span>
-                      </div>
-                    )}
-                    
-                    <div className="flex justify-between items-center pt-1">
-                      <span className="font-bold text-neutral-300">Creator Share (Direct Sale):</span>
-                      <span className="font-black text-emerald-400 text-sm">${creatorNetNormal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-neutral-300">Creator Share (Affiliate Sale):</span>
-                      <span className="font-black text-[#1CB0F6] text-sm">${Math.max(0, creatorNetReferred).toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* Section C: Markdown & Descriptions */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-6 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <ImageIcon className="w-4 h-4 text-[#CE82FF]" />
-              Descriptions & Documentation
-            </h3>
-
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Short Catchy Subtitle *</label>
-                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
-                  shortDescription.length === 0 ? "bg-neutral-800/40 text-neutral-500" :
-                  shortDescription.length < 50 ? "bg-amber-500/10 text-amber-500" :
-                  shortDescription.length <= 160 ? "bg-emerald-500/10 text-emerald-500" :
-                  "bg-rose-500/10 text-rose-500"
-                }`}>
-                  {shortDescription.length} / 160 chars {
-                    shortDescription.length === 0 ? "" :
-                    shortDescription.length < 50 ? "• Too Short" :
-                    shortDescription.length <= 160 ? "• Optimal SEO" :
-                    "• May Truncate"
-                  }
-                </span>
-              </div>
-              <input 
-                type="text" 
-                value={shortDescription} 
-                onChange={(e) => setShortDescription(e.target.value)} 
-                placeholder="High-converting tagline, displayed on dashboard cards" 
-                required 
-                className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-sm focus:outline-none focus:border-neutral-700" 
+            <FieldShell
+              id="pf-shortDescription"
+              label="One-line summary"
+              required
+              error={errors.shortDescription}
+              hint="Shown on product cards and in search results."
+              aside={<LengthMeter length={v.shortDescription.length} min={50} max={160} />}
+            >
+              <input
+                id="pf-shortDescription"
+                type="text"
+                value={v.shortDescription}
+                onChange={(e) => set("shortDescription", e.target.value)}
+                placeholder="Production-ready Next.js starter with auth, billing and email."
+                className={fieldClass}
+                {...err("shortDescription")}
               />
-            </div>
+            </FieldShell>
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Full Product Details * (Markdown)</label>
-                <div className="flex bg-neutral-900 border border-neutral-800 rounded-lg p-0.5 text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => setDescTab("write")}
-                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${descTab === "write" ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}
-                  >
-                    Write
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDescTab("preview")}
-                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${descTab === "preview" ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}
-                  >
-                    Preview
-                  </button>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="pf-description" className={labelClass}>
+                  Full description<span aria-hidden className="text-primary"> *</span>
+                  <span className="font-normal text-muted-foreground"> Markdown</span>
+                </label>
+                <div role="tablist" aria-label="Description editor" className="inline-flex rounded-[10px] bg-secondary p-0.5">
+                  {(["write", "preview"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={descTab === tab}
+                      onClick={() => setDescTab(tab)}
+                      className={cn(
+                        "h-7 rounded-lg px-3 text-[13px] capitalize transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        descTab === tab
+                          ? "bg-card font-medium text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {tab}
+                    </button>
+                  ))}
                 </div>
               </div>
               {descTab === "write" ? (
                 <textarea
-                  rows={10}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Markdown is supported... e.g. # Key Features, - Built-in authentication, etc."
-                  required
-                  className="w-full px-4 py-3 rounded-xl border border-neutral-800 bg-neutral-950 text-white focus:outline-none focus:ring-2 focus:ring-primary/45 transition-colors font-medium text-sm"
+                  id="pf-description"
+                  rows={12}
+                  value={v.description}
+                  onChange={(e) => set("description", e.target.value)}
+                  placeholder={"## What’s included\n- Auth, billing and email wired up\n- Deploy guide\n\n## Requirements\nNode 20+"}
+                  className={cn(textareaClass, "min-h-60 font-mono text-[13px]")}
+                  {...err("description")}
                 />
               ) : (
-                <div 
-                  dangerouslySetInnerHTML={{ __html: marked.parse(description || "*No markdown typed yet.*") as string }} 
-                  className="markdown-content w-full px-4 py-3 min-h-[240px] rounded-xl border border-neutral-800 bg-neutral-950 text-white overflow-y-auto font-medium text-sm leading-relaxed space-y-4"
+                <div
+                  className="markdown-content min-h-60 overflow-y-auto rounded-[10px] border border-input bg-background px-4 py-3 text-sm"
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
               )}
+              {errors.description ? (
+                <p id="pf-description-error" className={errorTextClass}>
+                  {errors.description}
+                </p>
+              ) : (
+                <p id="pf-description-hint" className={hintClass}>
+                  Cover what’s included, the stack, setup steps and licence.
+                </p>
+              )}
             </div>
-          </div>
+          </Section>
+
+          <Section id="pf-pricing" title="Pricing" description="Prices are in US dollars. Razorpay charges buyers the INR equivalent at checkout.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FieldShell id="pf-price" label="Price (USD)" required={!v.isFree} error={errors.price}>
+                <div className="relative">
+                  <span aria-hidden className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-muted-foreground">
+                    $
+                  </span>
+                  <input
+                    id="pf-price"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    value={v.isFree ? "0" : v.price}
+                    disabled={v.isFree}
+                    onChange={(e) => set("price", e.target.value)}
+                    placeholder="499"
+                    className={cn(fieldClass, "tabular pl-7")}
+                    {...err("price")}
+                  />
+                </div>
+              </FieldShell>
+              <div className="flex items-end pb-1 sm:pb-2.5">
+                <SwitchRow
+                  id="pf-isFree"
+                  label="Free product"
+                  description="Buyers download without paying."
+                  checked={v.isFree}
+                  onCheckedChange={(checked) => {
+                    setV((prev) => ({ ...prev, isFree: checked, price: checked ? "0" : prev.price === "0" ? "" : prev.price }));
+                    setErrors((prev) => ({ ...prev, price: undefined }));
+                  }}
+                />
+              </div>
+            </div>
+
+            {!isCreatorConsole ? (
+              <SwitchRow
+                id="pf-personal"
+                label="First-party product"
+                description="List under ScriptlyHQ directly."
+                checked={v.personal}
+                onCheckedChange={(c) => set("personal", c)}
+              />
+            ) : null}
+
+            <div className="space-y-4 border-t border-border pt-5">
+              <h3 className="text-sm font-medium text-foreground">Promotion</h3>
+              <FieldShell
+                id="pf-discountPercent"
+                label="Discount (%)"
+                optional
+                error={errors.discountPercent}
+                hint="Applied to the price above. Leave at 0 for no discount."
+              >
+                <input
+                  id="pf-discountPercent"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={100}
+                  disabled={v.isFree}
+                  value={v.isFree ? "0" : v.discountPercent}
+                  onChange={(e) => set("discountPercent", e.target.value)}
+                  placeholder="20"
+                  className={cn(fieldClass, "tabular sm:max-w-40")}
+                  {...err("discountPercent")}
+                />
+              </FieldShell>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FieldShell id="pf-promoStart" label="Starts" optional>
+                  <input
+                    id="pf-promoStart"
+                    type="datetime-local"
+                    value={v.promoStart}
+                    onChange={(e) => set("promoStart", e.target.value)}
+                    className={cn(fieldClass, "tabular")}
+                  />
+                </FieldShell>
+                <FieldShell id="pf-promoEnd" label="Ends" optional error={errors.promoEnd}>
+                  <input
+                    id="pf-promoEnd"
+                    type="datetime-local"
+                    value={v.promoEnd}
+                    min={v.promoStart || undefined}
+                    onChange={(e) => set("promoEnd", e.target.value)}
+                    className={cn(fieldClass, "tabular")}
+                    {...err("promoEnd")}
+                  />
+                </FieldShell>
+              </div>
+            </div>
+
+            <div className="space-y-4 border-t border-border pt-5">
+              <FieldShell
+                id="pf-affiliateCommissionPercent"
+                label="Affiliate commission (%)"
+                error={errors.affiliateCommissionPercent}
+                hint="Paid to partners who refer a sale, out of your share. 5–50%."
+              >
+                <input
+                  id="pf-affiliateCommissionPercent"
+                  type="number"
+                  inputMode="numeric"
+                  min={5}
+                  max={50}
+                  value={v.affiliateCommissionPercent}
+                  onChange={(e) => set("affiliateCommissionPercent", e.target.value)}
+                  placeholder="30"
+                  className={cn(fieldClass, "tabular sm:max-w-40")}
+                  {...err("affiliateCommissionPercent")}
+                />
+              </FieldShell>
+            </div>
+
+            <div className="border-t border-border pt-5">
+              <h3 className="text-sm font-medium text-foreground">What you earn per sale</h3>
+              <dl className="mt-3 space-y-2 text-sm" aria-live="polite">
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Buyer pays</dt>
+                  <dd className="tabular text-foreground">
+                    {pricing.salePaise <= 0 ? (
+                      <span className="text-success">Free</span>
+                    ) : pricing.discount > 0 ? (
+                      <>
+                        <s className="mr-1.5 text-muted-foreground">{formatMoney(pricing.listPaise)}</s>
+                        {formatMoney(pricing.salePaise)}
+                      </>
+                    ) : (
+                      formatMoney(pricing.salePaise)
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">Platform fee (5%)</dt>
+                  <dd className="tabular text-muted-foreground">−{formatMoney(pricing.platformFee)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-t border-border pt-2">
+                  <dt className="font-medium text-foreground">You keep · direct sale</dt>
+                  <dd className="tabular font-semibold text-foreground">{formatMoney(pricing.direct)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">You keep · affiliate sale ({pricing.commission}% commission)</dt>
+                  <dd className="tabular text-foreground">{formatMoney(pricing.referred)}</dd>
+                </div>
+              </dl>
+            </div>
+          </Section>
         </div>
 
-        {/* Right Column: Media, Settings, Distribution */}
-        <div className="lg:col-span-5 space-y-8">
-          
-          {/* Section D: Product Assets & File Package */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-6 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <FileUp className="w-4 h-4 text-amber-500" />
-              Code Package & File Store
-            </h3>
-
-            {/* Private Package File ZIP URL */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest flex items-center gap-1">
-                  <FileArchive className="w-3.5 h-3.5 text-neutral-300" />
-                  Product ZIP Package *
-                </label>
-              </div>
+        {/* Right column */}
+        <div className="space-y-6 lg:col-span-5">
+          <Section id="pf-files" title="Files & delivery" description="What buyers download after paying.">
+            <FieldShell
+              id="pf-fileUrl"
+              label="Package URL"
+              required
+              error={errors.fileUrl}
+              hint="ZIP, tar or PDF. Uploads are stored as a private GitHub release asset."
+            >
               <div className="flex gap-2">
-                <input 
-                  type="url" 
-                  value={fileUrl} 
-                  onChange={(e) => setFileUrl(e.target.value)} 
-                  placeholder="Private download URL (zip/tar/pdf)" 
-                  required 
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs outline-none focus:border-neutral-500" 
+                <input
+                  id="pf-fileUrl"
+                  type="url"
+                  value={v.fileUrl}
+                  onChange={(e) => set("fileUrl", e.target.value)}
+                  placeholder="https://…/product.zip"
+                  className={cn(fieldClass, "font-mono text-[13px]")}
+                  {...err("fileUrl")}
                 />
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    onChange={(e) => handleUpload(e, setFileUrl, "fileUrl", true)} // Force GitHub Release API upload
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                  />
-                  <button 
-                    type="button" 
-                    className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl transition-colors cursor-pointer flex items-center justify-center"
-                    title="Upload private ZIP package via GitHub Releases API fallback"
-                  >
-                    {uploading === "fileUrl" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  </button>
-                </div>
+                <UploadButton
+                  label="Upload"
+                  busy={uploading === "fileUrl"}
+                  disabled={uploading !== null && uploading !== "fileUrl"}
+                  onFiles={(e) => handleUpload(e, "fileUrl", true)}
+                />
               </div>
-              <span className="text-[9px] text-neutral-500 font-bold leading-normal block">
-                Securely uploads file via private GitHub releases tag backup.
-              </span>
-            </div>
+            </FieldShell>
 
-            {/* Secure Direct Download Redirect Option */}
-            <div className="flex items-center justify-between p-4 rounded-xl border border-neutral-800 bg-neutral-950/60">
-              <div className="space-y-0.5 pr-2">
-                <h4 className="text-xs font-bold text-neutral-300 uppercase">Redirect secure download</h4>
-                <p className="text-[9px] text-neutral-500">Redirect directly to the package URL instead of streaming it</p>
-              </div>
-              <input 
-                type="checkbox" 
-                checked={redirectDownload} 
-                onChange={(e) => setRedirectDownload(e.target.checked)} 
-                className="w-4.5 h-4.5 rounded accent-white cursor-pointer" 
+            <SwitchRow
+              id="pf-redirectDownload"
+              label="Redirect downloads"
+              description="Send buyers straight to the package URL instead of streaming it through Scriptly."
+              checked={v.redirectDownload}
+              onCheckedChange={(c) => set("redirectDownload", c)}
+            />
+
+            <FieldShell id="pf-demoUrl" label="Live demo URL" optional error={errors.demoUrl}>
+              <input
+                id="pf-demoUrl"
+                type="url"
+                value={v.demoUrl}
+                onChange={(e) => set("demoUrl", e.target.value)}
+                placeholder="https://demo.example.com"
+                className={fieldClass}
+                {...err("demoUrl")}
               />
-            </div>
+            </FieldShell>
+          </Section>
 
-            {/* Demo Live Preview URL */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase tracking-widest flex items-center gap-1">
-                <LinkIcon className="w-3.5 h-3.5 text-neutral-300" />
-                Demo Live URL
-              </label>
-              <input 
-                type="url" 
-                value={demoUrl} 
-                onChange={(e) => setDemoUrl(e.target.value)} 
-                placeholder="https://demo.example.com" 
-                className="w-full px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none font-medium" 
-              />
-            </div>
-          </div>
-
-          {/* Section E: Media & Video Embeds */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-6 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <Video className="w-4 h-4 text-cyan-400" />
-              Media Showcase & Previews
-            </h3>
-
-            {/* Thumbnail URL */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase flex justify-between">
-                Thumbnail Image URL *
-                <span className="text-[9px] lowercase font-normal opacity-60">jpg/png/webp</span>
-              </label>
-              {thumbnailUrl && (
-                <div className="relative w-28 h-20 rounded-xl border border-neutral-800 overflow-hidden bg-neutral-950/60 mb-2">
-                  <img src={thumbnailUrl} alt="Thumbnail Preview" className="w-full h-full object-cover" loading="lazy" />
-                </div>
-              )}
-              <div className="flex gap-2">
-                <input 
-                  type="url" 
-                  value={thumbnailUrl} 
-                  onChange={(e) => setThumbnailUrl(e.target.value)} 
-                  placeholder="https://..." 
-                  className="flex-1 px-4 py-2 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none" 
+          <Section id="pf-media" title="Media" description="A clear thumbnail and real screenshots sell the product.">
+            <FieldShell
+              id="pf-thumbnailUrl"
+              label="Thumbnail"
+              error={errors.thumbnailUrl}
+              hint="16:10 works best. JPG, PNG or WebP."
+            >
+              {v.thumbnailUrl ? (
+                 
+                <img
+                  src={v.thumbnailUrl}
+                  alt="Thumbnail preview"
+                  width={320}
+                  height={200}
+                  loading="lazy"
+                  decoding="async"
+                  className="mb-2 aspect-[16/10] w-full max-w-xs rounded-[10px] bg-secondary object-cover"
                 />
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    onChange={(e) => handleUpload(e, setThumbnailUrl, "thumbnail")} 
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                  />
-                  <button type="button" className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl transition-colors cursor-pointer">
-                    {uploading === "thumbnail" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Hover Preview GIF URL */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase flex justify-between">
-                Preview GIF URL
-                <span className="text-[9px] lowercase font-normal opacity-60">Hover card animation</span>
-              </label>
-              {previewGif && (
-                <div className="relative w-28 h-20 rounded-xl border border-neutral-800 overflow-hidden bg-neutral-950/60 mb-2">
-                  <img src={previewGif} alt="GIF Preview" className="w-full h-full object-cover" loading="lazy" />
-                </div>
-              )}
+              ) : null}
               <div className="flex gap-2">
-                <input 
-                  type="url" 
-                  value={previewGif} 
-                  onChange={(e) => setPreviewGif(e.target.value)} 
-                  placeholder="https://..." 
-                  className="flex-1 px-4 py-2 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none" 
+                <input
+                  id="pf-thumbnailUrl"
+                  type="url"
+                  value={v.thumbnailUrl}
+                  onChange={(e) => set("thumbnailUrl", e.target.value)}
+                  placeholder="https://…"
+                  className={fieldClass}
+                  {...err("thumbnailUrl")}
                 />
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    accept="image/gif,image/webp" 
-                    onChange={(e) => handleUpload(e, setPreviewGif, "previewGif")} 
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                  />
-                  <button type="button" className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl transition-colors cursor-pointer">
-                    {uploading === "previewGif" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
+                <UploadButton
+                  label="Upload"
+                  accept="image/*"
+                  busy={uploading === "thumbnailUrl"}
+                  disabled={uploading !== null && uploading !== "thumbnailUrl"}
+                  onFiles={(e) => handleUpload(e, "thumbnailUrl")}
+                />
               </div>
-            </div>
+            </FieldShell>
 
-            {/* Video Previews */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-black text-neutral-400 uppercase flex items-center gap-1">
-                  Video Embed / Preview URL
-                </label>
-                {/* Info button with supported format descriptions */}
-                <div className="relative group/tooltip">
-                  <HelpCircle className="w-4 h-4 text-neutral-500 hover:text-neutral-300 cursor-pointer" />
-                  <div className="absolute right-0 bottom-6 hidden group-hover/tooltip:block bg-neutral-950 text-neutral-300 border border-neutral-800 p-4 rounded-xl text-[10px] w-56 shadow-2xl z-50 leading-relaxed font-semibold">
-                    <p className="font-bold text-white mb-1 uppercase tracking-wider text-[9px]">Supported Video Formats:</p>
-                    <ul className="list-disc pl-3.5 space-y-1">
-                      <li>YouTube URLs</li>
-                      <li>Vimeo URLs</li>
-                      <li>Dailymotion Videos</li>
-                      <li>Twitter / X Status links</li>
-                      <li>Direct video files (.mp4 / .webm)</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
+            <FieldShell id="pf-previewGif" label="Hover preview" optional hint="GIF or WebP shown when buyers hover the card.">
+              {v.previewGif ? (
+                 
+                <img
+                  src={v.previewGif}
+                  alt="Hover preview"
+                  width={320}
+                  height={200}
+                  loading="lazy"
+                  decoding="async"
+                  className="mb-2 aspect-[16/10] w-full max-w-xs rounded-[10px] bg-secondary object-cover"
+                />
+              ) : null}
               <div className="flex gap-2">
-                <input 
-                  type="url" 
-                  value={videoUrl} 
-                  onChange={(e) => setVideoUrl(e.target.value)} 
-                  placeholder="https://youtube.com/watch?v=... or .mp4" 
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs outline-none focus:border-neutral-500" 
+                <input
+                  id="pf-previewGif"
+                  type="url"
+                  value={v.previewGif}
+                  onChange={(e) => set("previewGif", e.target.value)}
+                  placeholder="https://…"
+                  className={fieldClass}
+                  aria-describedby="pf-previewGif-hint"
                 />
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    accept="video/*" 
-                    onChange={(e) => handleUpload(e, setVideoUrl, "videoUrl", true)} // Force GitHub Release API upload
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                  />
-                  <button 
-                    type="button" 
-                    className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl transition-colors cursor-pointer flex items-center justify-center"
-                    title="Upload video via GitHub Releases API fallback"
-                  >
-                    {uploading === "videoUrl" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  </button>
-                </div>
+                <UploadButton
+                  label="Upload"
+                  accept="image/gif,image/webp"
+                  busy={uploading === "previewGif"}
+                  disabled={uploading !== null && uploading !== "previewGif"}
+                  onFiles={(e) => handleUpload(e, "previewGif")}
+                />
               </div>
+            </FieldShell>
 
-              {/* Video Embed Live Preview Box */}
-              {videoUrl && (
-                <div className="mt-4 rounded-xl border border-neutral-800 overflow-hidden bg-black/40 p-1.5 aspect-video flex items-center justify-center">
-                  {resolvedEmbedUrl ? (
-                    <iframe 
-                      src={resolvedEmbedUrl} 
-                      className="w-full h-full border-0" 
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
-                      allowFullScreen 
+            <FieldShell
+              id="pf-videoUrl"
+              label="Video"
+              optional
+              hint="YouTube, Vimeo, Dailymotion, an X post, or a direct .mp4/.webm file."
+            >
+              <div className="flex gap-2">
+                <input
+                  id="pf-videoUrl"
+                  type="url"
+                  value={v.videoUrl}
+                  onChange={(e) => set("videoUrl", e.target.value)}
+                  placeholder="https://youtube.com/watch?v=…"
+                  className={fieldClass}
+                  aria-describedby="pf-videoUrl-hint"
+                />
+                <UploadButton
+                  label="Upload"
+                  accept="video/*"
+                  busy={uploading === "videoUrl"}
+                  disabled={uploading !== null && uploading !== "videoUrl"}
+                  onFiles={(e) => handleUpload(e, "videoUrl", true)}
+                />
+              </div>
+              {v.videoUrl ? (
+                <div className="mt-2 flex aspect-video items-center justify-center overflow-hidden rounded-[10px] bg-secondary">
+                  {embedUrl ? (
+                    <iframe
+                      src={embedUrl}
+                      title="Video preview"
+                      className="h-full w-full border-0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                      loading="lazy"
                     />
                   ) : isDirectVideo ? (
-                    <video src={videoUrl} controls className="w-full h-full rounded-lg" />
+                    <video src={v.videoUrl} controls preload="metadata" className="h-full w-full" />
                   ) : tweetId ? (
-                    <div className="w-full h-full overflow-y-auto max-w-[320px]">
+                    <div className="h-full w-full max-w-[320px] overflow-y-auto">
                       <Tweet id={tweetId} />
                     </div>
                   ) : (
-                    <span className="text-[10px] text-neutral-500 font-bold">Preview format not supported directly inside form</span>
+                    <p className="px-4 text-center text-xs text-muted-foreground">
+                      No preview for this link. It will still be saved.
+                    </p>
                   )}
                 </div>
-              )}
-            </div>
+              ) : null}
+            </FieldShell>
 
-            {/* Screenshots list manager */}
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-neutral-400 uppercase flex justify-between">
-                Carousel Screenshots
-                <span className="text-[9px] lowercase font-normal opacity-60">Rearrange and manage screenshots</span>
+              <div className="flex items-baseline justify-between gap-3">
+                <span id="pf-screenshots-label" className={labelClass}>
+                  Screenshots <span className="font-normal text-muted-foreground">optional</span>
+                </span>
+                <span className="tabular text-xs text-muted-foreground">{screenshotList.length} added</span>
+              </div>
+
+              {screenshotList.length > 0 ? (
+                <ol aria-labelledby="pf-screenshots-label" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {screenshotList.map((url, idx) => (
+                    <li key={`${url}-${idx}`} className="group relative overflow-hidden rounded-[10px] bg-secondary">
+                      { }
+                      <img
+                        src={url}
+                        alt={`Screenshot ${idx + 1}`}
+                        width={240}
+                        height={150}
+                        loading="lazy"
+                        decoding="async"
+                        className="aspect-[16/10] w-full object-cover"
+                      />
+                      <div className="flex items-center justify-between gap-1 border-t border-border bg-card px-1 py-1">
+                        <span className="tabular px-1 text-xs text-muted-foreground">{idx + 1}</span>
+                        <div className="flex items-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={idx === 0}
+                            onClick={() => moveScreenshot(idx, idx - 1)}
+                            aria-label={`Move screenshot ${idx + 1} earlier`}
+                          >
+                            <ArrowLeft strokeWidth={1.75} />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={idx === screenshotList.length - 1}
+                            onClick={() => moveScreenshot(idx, idx + 1)}
+                            aria-label={`Move screenshot ${idx + 1} later`}
+                          >
+                            <ArrowRight strokeWidth={1.75} />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => set("screenshots", screenshotList.filter((_, i) => i !== idx).join(", "))}
+                            aria-label={`Remove screenshot ${idx + 1}`}
+                            className="hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 strokeWidth={1.75} />
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+
+              <label htmlFor="pf-screenshots" className="sr-only">
+                Screenshot URLs, comma separated
               </label>
-              
-              <div className="space-y-4">
-                {/* Visual Screenshot List with Preview & Reorder Actions */}
-                {(() => {
-                  const arr = screenshots.split(",").map(s => s.trim()).filter(Boolean);
-                  if (arr.length === 0) return null;
-                  return (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-4 rounded-xl border border-neutral-800 bg-neutral-950/30">
-                      {arr.map((url, idx) => {
-                        const handleMoveLeft = () => {
-                          if (idx === 0) return;
-                          const newArr = [...arr];
-                          const temp = newArr[idx];
-                          newArr[idx] = newArr[idx - 1];
-                          newArr[idx - 1] = temp;
-                          setScreenshots(newArr.join(", "));
-                        };
+              <textarea
+                id="pf-screenshots"
+                value={v.screenshots}
+                onChange={(e) => set("screenshots", e.target.value)}
+                placeholder="Paste image URLs separated by commas"
+                rows={2}
+                className={cn(textareaClass, "resize-none text-[13px]")}
+              />
+              <UploadButton
+                full
+                label="Upload screenshots"
+                accept="image/*"
+                multiple
+                busy={uploading === "screenshots"}
+                disabled={uploading !== null && uploading !== "screenshots"}
+                onFiles={(e) => handleUpload(e, "screenshots")}
+              />
+            </div>
+          </Section>
 
-                        const handleMoveRight = () => {
-                          if (idx === arr.length - 1) return;
-                          const newArr = [...arr];
-                          const temp = newArr[idx];
-                          newArr[idx] = newArr[idx + 1];
-                          newArr[idx + 1] = temp;
-                          setScreenshots(newArr.join(", "));
-                        };
-
-                        const handleDelete = () => {
-                          const newArr = arr.filter((_, i) => i !== idx);
-                          setScreenshots(newArr.join(", "));
-                          toast.success("Screenshot removed.");
-                        };
-
-                        return (
-                          <div key={idx} className="relative group rounded-lg overflow-hidden border border-neutral-800 bg-neutral-900 aspect-video flex flex-col justify-between">
-                            {/* Image preview */}
-                            <img src={url} alt={`Screenshot ${idx + 1}`} className="w-full h-full object-cover" />
-                            
-                            {/* Overlay Controls */}
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1.5">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[8px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded font-black">
-                                  #{idx + 1}
-                                </span>
-                                <button 
-                                  type="button" 
-                                  onClick={handleDelete}
-                                  className="p-1 bg-red-600/90 text-white rounded hover:bg-red-700 transition-colors cursor-pointer"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                                  </svg>
-                                </button>
-                              </div>
-                              
-                              <div className="flex justify-center gap-1.5">
-                                <button
-                                  type="button"
-                                  disabled={idx === 0}
-                                  onClick={handleMoveLeft}
-                                  className="p-1 bg-neutral-800 text-white rounded hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800 transition-colors cursor-pointer"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                </button>
-                                
-                                <button
-                                  type="button"
-                                  disabled={idx === arr.length - 1}
-                                  onClick={handleMoveRight}
-                                  className="p-1 bg-neutral-800 text-white rounded hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-neutral-800 transition-colors cursor-pointer"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
-                {/* Comma separated text box for quick updates */}
-                <textarea 
-                  value={screenshots} 
-                  onChange={(e) => setScreenshots(e.target.value)} 
-                  placeholder="Paste direct URLs separated by comma (or use the upload button below)" 
-                  rows={2} 
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none resize-none font-medium leading-relaxed" 
-                />
-                
-                <div className="relative w-full">
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    multiple 
-                    onChange={(e) => handleUpload(e, setScreenshots, "screenshots")} 
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                  />
-                  <button type="button" className="w-full py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer">
-                    {uploading === "screenshots" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Upload className="w-3.5 h-3.5" /> Upload Screenshots (Multiple Supported)</>}
+          <Section id="pf-listing" title="Listing details" description="Search tags, version and visibility.">
+            <div className="space-y-2">
+              <label htmlFor="pf-tags-input" className={labelClass}>
+                Tags <span className="font-normal text-muted-foreground">optional</span>
+              </label>
+              {tagList.length > 0 ? (
+                <ul className="flex flex-wrap gap-1.5" aria-label="Selected tags">
+                  {tagList.map((tag) => (
+                    <li key={tag}>
+                      <span className="inline-flex h-7 items-center gap-1 rounded-full bg-secondary pr-1 pl-2.5 text-xs text-foreground">
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => set("tags", tagList.filter((t) => t !== tag).join(", "))}
+                          aria-label={`Remove tag ${tag}`}
+                          className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                        >
+                          <X className="size-3" strokeWidth={2} />
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <input
+                id="pf-tags-input"
+                type="text"
+                value={tagDraft}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val.includes(",")) {
+                    val.split(",").forEach(addTag);
+                    setTagDraft("");
+                  } else {
+                    setTagDraft(val);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTag(tagDraft);
+                    setTagDraft("");
+                  } else if (e.key === "Backspace" && !tagDraft && tagList.length > 0) {
+                    set("tags", tagList.slice(0, -1).join(", "));
+                  }
+                }}
+                onBlur={() => {
+                  if (tagDraft.trim()) {
+                    addTag(tagDraft);
+                    setTagDraft("");
+                  }
+                }}
+                placeholder="Type a tag and press Enter"
+                className={fieldClass}
+                aria-describedby="pf-tags-suggest"
+              />
+              <div id="pf-tags-suggest" className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-xs text-muted-foreground">Suggestions:</span>
+                {SUGGESTED_TAGS.filter((t) => !tagList.includes(t)).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => addTag(t)}
+                    className="h-6 rounded-full border border-border px-2 text-xs text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  >
+                    + {t}
                   </button>
-                </div>
+                ))}
               </div>
             </div>
-          </div>
 
-          {/* Section F: Publishing Config & Metadata */}
-          <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/10 space-y-4 backdrop-blur-sm">
-            <h3 className="text-xs font-black uppercase tracking-widest text-white border-b border-neutral-800/60 pb-3 flex items-center gap-2">
-              <Settings className="w-4 h-4 text-blue-500" />
-              Settings & Search Metadata
-            </h3>
+            <FieldShell id="pf-version" label="Version">
+              <input
+                id="pf-version"
+                type="text"
+                value={v.version}
+                onChange={(e) => set("version", e.target.value)}
+                placeholder="1.0.0"
+                className={cn(fieldClass, "font-mono sm:max-w-40")}
+              />
+            </FieldShell>
 
             {!isCreatorConsole ? (
-              <>
-                <div className="grid gap-2">
-                  {[
-                    {
-                      label: "Featured Spotlight",
-                      description: "Show this product in featured marketplace placements.",
-                      checked: featured,
-                      onChange: setFeatured,
-                    },
-                    {
-                      label: "Publicly Published",
-                      description: "Make the product visible and purchasable to customers.",
-                      checked: published,
-                      onChange: setPublished,
-                    },
-                    {
-                      label: "Show Trust Stats",
-                      description: "Display views, downloads, and saves on the public product page.",
-                      checked: showStats,
-                      onChange: setShowStats,
-                    },
-                  ].map((setting) => (
-                    <div
-                      key={setting.label}
-                      className="flex items-center justify-between gap-4 rounded-xl border border-neutral-800 bg-neutral-950/45 p-3.5"
-                    >
-                      <div className="min-w-0 pr-2">
-                        <h4 className="text-xs font-bold text-neutral-200">{setting.label}</h4>
-                        <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
-                          {setting.description}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={setting.checked}
-                        aria-label={`${setting.label}: ${setting.checked ? "On" : "Off"}`}
-                        onClick={() => setting.onChange(!setting.checked)}
-                        className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${setting.checked ? "border-primary bg-primary" : "border-neutral-700 bg-neutral-800"}`}
-                      >
-                        <span
-                          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${setting.checked ? "translate-x-5" : "translate-x-0.5"}`}
-                        />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="pt-4 border-t border-neutral-800 space-y-4">
-                  <h4 className="text-[10px] font-black uppercase tracking-wider text-[#1CB0F6]">Override Statistics</h4>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-neutral-400 uppercase">Views</label>
-                      <input 
-                        type="number" 
-                        value={views} 
-                        onChange={(e) => setViews(e.target.value)} 
-                        className="w-full px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-white text-xs outline-none" 
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-neutral-400 uppercase">Downloads</label>
-                      <input 
-                        type="number" 
-                        value={downloadsCount} 
-                        onChange={(e) => setDownloadsCount(e.target.value)} 
-                        className="w-full px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-white text-xs outline-none" 
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black text-neutral-400 uppercase">Saves</label>
-                      <input 
-                        type="number" 
-                        value={saves} 
-                        onChange={(e) => setSaves(e.target.value)} 
-                        className="w-full px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-950 text-white text-xs outline-none" 
-                      />
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/5 text-amber-400 text-xs flex items-start gap-2">
-                <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-amber-300 uppercase text-[10px] mb-1">Approval Moderation</h4>
-                  <p className="text-[10px] leading-relaxed text-neutral-400">
-                    To maintain library quality, all submitted scripts are saved as unlisted drafts and audited by Scriptly moderators before public release.
-                  </p>
-                </div>
-              </div>
-            )}
-            
-            <div className="pt-4 border-t border-neutral-800 space-y-4">
-              <div className="space-y-2.5">
-                <label className="text-[10px] font-black text-neutral-400 uppercase tracking-wider">Search Tags</label>
-                
-                {/* Visual tag chips preview */}
-                {tags.split(",").map(t => t.trim()).filter(Boolean).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2.5 rounded-xl border border-neutral-850 bg-neutral-950/40">
-                    {tags.split(",").map(t => t.trim()).filter(Boolean).map((tag, idx) => {
-                      const handleRemoveTag = () => {
-                        const newTags = tags.split(",").map(t => t.trim()).filter(Boolean).filter((_, i) => i !== idx);
-                        setTags(newTags.join(", "));
-                      };
-                      return (
-                        <span key={idx} className="inline-flex items-center gap-1 bg-neutral-800 text-neutral-200 text-[9px] font-black uppercase tracking-wider py-1 px-2.5 rounded-lg border border-neutral-700/50">
-                          {tag}
-                          <button 
-                            type="button" 
-                            onClick={handleRemoveTag}
-                            className="text-neutral-500 hover:text-rose-400 transition-colors font-bold text-[10px] pl-0.5 cursor-pointer"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-                
-                <input 
-                  type="text" 
-                  name="tags" 
-                  value={tags} 
-                  onChange={(e) => setTags(e.target.value)} 
-                  placeholder="nextjs, tailwind, auth" 
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none font-medium" 
+              <div className="space-y-4 border-t border-border pt-5">
+                <SwitchRow
+                  id="pf-featured"
+                  label="Featured"
+                  description="Show in featured marketplace placements."
+                  checked={v.featured}
+                  onCheckedChange={(c) => set("featured", c)}
                 />
-
-                {/* Popular suggested tags list */}
-                <div className="space-y-1">
-                  <p className="text-[8px] text-neutral-500 font-bold uppercase tracking-wider">Suggested tags (click to add):</p>
-                  <div className="flex flex-wrap gap-1">
-                    {["nextjs", "tailwindcss", "typescript", "react", "saas", "boilerplate", "api", "cloudflare-worker", "ebook"].map((suggested) => {
-                      const handleAddTag = () => {
-                        const current = tags.split(",").map(t => t.trim()).filter(Boolean);
-                        if (!current.includes(suggested)) {
-                          setTags([...current, suggested].join(", "));
-                        }
-                      };
-                      return (
-                        <button
-                          key={suggested}
-                          type="button"
-                          onClick={handleAddTag}
-                          className="bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-white text-[8px] py-1 px-2 rounded-md transition-all font-mono font-bold cursor-pointer"
-                        >
-                          +{suggested}
-                        </button>
-                      );
-                    })}
+                <SwitchRow
+                  id="pf-published"
+                  label="Published"
+                  description="Visible and purchasable by customers."
+                  checked={v.published}
+                  onCheckedChange={(c) => set("published", c)}
+                />
+                <SwitchRow
+                  id="pf-showStats"
+                  label="Show stats"
+                  description="Display views, downloads and saves on the product page."
+                  checked={v.showStats}
+                  onCheckedChange={(c) => set("showStats", c)}
+                />
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium text-foreground">Stat overrides</legend>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        ["views", "Views"],
+                        ["downloadsCount", "Downloads"],
+                        ["saves", "Saves"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key} className="space-y-1">
+                        <label htmlFor={`pf-${key}`} className="text-xs text-muted-foreground">
+                          {label}
+                        </label>
+                        <input
+                          id={`pf-${key}`}
+                          type="number"
+                          min={0}
+                          value={v[key]}
+                          onChange={(e) => set(key, e.target.value)}
+                          className={cn(fieldClass, "tabular")}
+                        />
+                      </div>
+                    ))}
                   </div>
-                </div>
+                </fieldset>
+                <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  <Link href="/hire-me" className="text-primary underline-offset-4 hover:underline">
+                    Hire developer page
+                  </Link>
+                  <a
+                    href="https://www.blogger.com/blog/posts/446251549562029884"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                  >
+                    Blogger posts <ExternalLink className="size-3" strokeWidth={1.75} />
+                  </a>
+                </p>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-neutral-400 uppercase">Build Version</label>
-                <input type="text" name="version" value={version} onChange={(e) => setVersion(e.target.value)} className="w-full px-4 py-2.5 rounded-xl border border-neutral-800 bg-neutral-950 text-white text-xs focus:border-neutral-500 outline-none font-mono font-medium" />
-              </div>
-            </div>
+            ) : null}
+          </Section>
+        </div>
+      </div>
+
+      {/* Sticky action bar */}
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border sm:bg-card sm:px-5 sm:shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.12)]">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {Object.keys(errors).some((k) => errors[k as FieldKey])
+              ? "Fix the highlighted fields to continue."
+              : isEdit
+                ? "Changes apply when you save."
+                : "Your draft is kept in this browser until you submit."}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {isEdit && initialData?.slug ? (
+              <Button asChild variant="ghost">
+                <Link href={`/products/${initialData.slug}`} target="_blank" rel="noopener noreferrer">
+                  View listing <ExternalLink strokeWidth={1.75} />
+                </Link>
+              </Button>
+            ) : null}
+            {!isEdit ? (
+              <Button type="button" variant="outline" disabled={isPending} onClick={() => submit(true)}>
+                {isPending && submitMode === "draft" ? <Loader2 className="animate-spin" /> : null}
+                Save as draft
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={isPending || uploading !== null} className="flex-1 sm:flex-none">
+              {isPending && submitMode === "publish" ? <Loader2 className="animate-spin" /> : null}
+              {isPending && submitMode === "publish" ? "Saving…" : primaryLabel}
+            </Button>
           </div>
         </div>
       </div>

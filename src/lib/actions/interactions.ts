@@ -2,17 +2,30 @@
 
 import { db } from "@/db";
 import { products, reviews, userInteractions, users, reviewLikes } from "@/db/schema";
-import { eq, and, sql, desc, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, isNull, inArray } from "drizzle-orm";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import { revalidatePath } from "next/cache";
 
+const INTERACTION_TYPES = new Set(["save", "like"]);
+const MAX_COMMENT_LENGTH = 5000;
+
+function isValidId(id: unknown): id is string {
+  return typeof id === "string" && id.length > 0 && id.length <= 200;
+}
+
+/** Shows a reviewer initial without exposing their email address publicly. */
+function maskEmail(email: string | null | undefined): string {
+  if (!email) return "";
+  const first = email.trim().charAt(0);
+  return first ? `${first}***` : "";
+}
+
 export async function incrementViewAction(productId: string) {
+  if (!isValidId(productId)) return { error: "Failed to increment views" };
   try {
     await db
       .update(products)
-      .set({
-        views: sql`${products.views} + 1`,
-      })
+      .set({ views: sql`${products.views} + 1` })
       .where(eq(products.id, productId));
     return { success: true };
   } catch (error) {
@@ -22,6 +35,7 @@ export async function incrementViewAction(productId: string) {
 }
 
 export async function getProductStatsAction(productId: string) {
+  if (!isValidId(productId)) return { error: "Failed to get stats" };
   try {
     const product = await db.query.products.findFirst({
       where: eq(products.id, productId),
@@ -44,83 +58,76 @@ export async function toggleInteractionAction(productId: string, type: "save" | 
     if (!user) {
       return { error: "Unauthorized: Sign in required." };
     }
+    if (!isValidId(productId) || !INTERACTION_TYPES.has(type)) {
+      return { error: "Invalid interaction." };
+    }
 
-    const existing = await db.query.userInteractions.findFirst({
-      where: and(
-        eq(userInteractions.userId, user.id),
-        eq(userInteractions.productId, productId),
-        eq(userInteractions.type, type)
-      ),
+    // Try to remove first: one round trip decides the toggle direction and
+    // cannot double-delete under concurrent clicks.
+    const removed = await db
+      .delete(userInteractions)
+      .where(
+        and(
+          eq(userInteractions.userId, user.id),
+          eq(userInteractions.productId, productId),
+          eq(userInteractions.type, type)
+        )
+      )
+      .returning({ id: userInteractions.id });
+
+    if (removed.length > 0) {
+      if (type === "save") {
+        await db
+          .update(products)
+          .set({ saves: sql`GREATEST(0, ${products.saves} - ${removed.length})` })
+          .where(eq(products.id, productId));
+      }
+      return { success: true, active: false };
+    }
+
+    await db.insert(userInteractions).values({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      productId,
+      type,
     });
 
-    if (existing) {
-      // Remove interaction
+    if (type === "save") {
       await db
-        .delete(userInteractions)
-        .where(eq(userInteractions.id, existing.id));
-
-      // Decrement saves count in products
-      if (type === "save") {
-        await db
-          .update(products)
-          .set({
-            saves: sql`GREATEST(0, ${products.saves} - 1)`,
-          })
-          .where(eq(products.id, productId));
-      }
-
-      return { success: true, active: false };
-    } else {
-      // Add interaction
-      await db.insert(userInteractions).values({
-        id: crypto.randomUUID(),
-        userId: user.id,
-        productId,
-        type,
-      });
-
-      // Increment saves count in products
-      if (type === "save") {
-        await db
-          .update(products)
-          .set({
-            saves: sql`${products.saves} + 1`,
-          })
-          .where(eq(products.id, productId));
-      }
-
-      return { success: true, active: true };
+        .update(products)
+        .set({ saves: sql`${products.saves} + 1` })
+        .where(eq(products.id, productId));
     }
-  } catch (error: any) {
+
+    return { success: true, active: true };
+  } catch (error) {
     console.error("Failed to toggle interaction:", error);
-    return { error: error.message || "Failed to update interaction" };
+    return { error: "Failed to update interaction" };
   }
 }
 
 export async function checkInteractionStatusAction(productId: string) {
   try {
     const user = await getOrCreateDbUser();
-    if (!user) {
+    if (!user || !isValidId(productId)) {
       return { isSaved: false, isLiked: false };
     }
 
-    const saved = await db.query.userInteractions.findFirst({
-      where: and(
-        eq(userInteractions.userId, user.id),
-        eq(userInteractions.productId, productId),
-        eq(userInteractions.type, "save")
-      ),
-    });
+    const rows = await db
+      .select({ type: userInteractions.type })
+      .from(userInteractions)
+      .where(
+        and(
+          eq(userInteractions.userId, user.id),
+          eq(userInteractions.productId, productId),
+          inArray(userInteractions.type, ["save", "like"])
+        )
+      );
 
-    const liked = await db.query.userInteractions.findFirst({
-      where: and(
-        eq(userInteractions.userId, user.id),
-        eq(userInteractions.productId, productId),
-        eq(userInteractions.type, "like")
-      ),
-    });
-
-    return { isSaved: !!saved, isLiked: !!liked };
+    return {
+      isSaved: rows.some((r) => r.type === "save"),
+      isLiked: rows.some((r) => r.type === "like"),
+    };
   } catch {
     return { isSaved: false, isLiked: false };
   }
@@ -133,50 +140,80 @@ export async function submitReviewAction(productId: string, rating: number, comm
       return { error: "Unauthorized: Sign in required." };
     }
 
-    if (rating < 1 || rating > 5) {
+    if (!isValidId(productId)) {
+      return { error: "Product not found." };
+    }
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
       return { error: "Rating must be between 1 and 5." };
     }
 
-    if (!comment.trim()) {
+    const trimmedComment = typeof comment === "string" ? comment.trim() : "";
+    if (!trimmedComment) {
       return { error: "Comment cannot be empty." };
     }
+    if (trimmedComment.length > MAX_COMMENT_LENGTH) {
+      return { error: `Comment must be under ${MAX_COMMENT_LENGTH} characters.` };
+    }
 
-    const id = crypto.randomUUID();
+    const replyTo = parentId || null;
+
+    const [product, parent] = await Promise.all([
+      db.query.products.findFirst({
+        where: eq(products.id, productId),
+        columns: { id: true, slug: true },
+      }),
+      replyTo
+        ? db.query.reviews.findFirst({
+            where: and(eq(reviews.id, replyTo), eq(reviews.productId, productId)),
+            columns: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (!product) {
+      return { error: "Product not found." };
+    }
+    // Replies must target a review on the same product.
+    if (replyTo && !parent) {
+      return { error: "The review you are replying to no longer exists." };
+    }
+
     await db.insert(reviews).values({
-      id,
+      id: crypto.randomUUID(),
       userId: user.id,
       productId,
       rating,
-      comment: comment.trim(),
-      parentId: parentId || null,
+      comment: trimmedComment,
+      parentId: replyTo,
     });
 
-    // Only recalculate average rating if it's a top-level review (not a reply)
-    if (!parentId) {
-      const allReviews = await db.query.reviews.findMany({
-        where: and(
-          eq(reviews.productId, productId),
-          isNull(reviews.parentId)
-        ),
-      });
+    // Only top-level reviews affect the product rating. Aggregate in SQL
+    // instead of loading every review into memory.
+    if (!replyTo) {
+      const [agg] = await db
+        .select({
+          avg: sql<string | null>`round(avg(${reviews.rating})::numeric, 1)::text`,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(reviews)
+        .where(and(eq(reviews.productId, productId), isNull(reviews.parentId)));
 
-      const totalRating = allReviews.reduce((sum, r) => sum + r.rating, 0);
-      const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
-
+      const count = Number(agg?.count ?? 0);
       await db
         .update(products)
         .set({
-          rating: avgRating,
-          ratingCount: allReviews.length,
+          rating: count > 0 && agg?.avg ? agg.avg : "5.0",
+          ratingCount: count,
         })
         .where(eq(products.id, productId));
     }
 
-    revalidatePath(`/products/${productId}`);
+    revalidatePath(`/products/${product.slug}`);
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Failed to submit review:", error);
-    return { error: error.message || "Failed to submit review" };
+    return { error: "Failed to submit review" };
   }
 }
 
@@ -186,74 +223,75 @@ export async function toggleReviewLikeAction(reviewId: string) {
     if (!user) {
       return { error: "Unauthorized: Sign in required." };
     }
-
-    const existing = await db.query.reviewLikes.findFirst({
-      where: and(
-        eq(reviewLikes.userId, user.id),
-        eq(reviewLikes.reviewId, reviewId)
-      ),
-    });
-
-    if (existing) {
-      await db.delete(reviewLikes).where(eq(reviewLikes.id, existing.id));
-      return { success: true, liked: false };
-    } else {
-      await db.insert(reviewLikes).values({
-        id: crypto.randomUUID(),
-        userId: user.id,
-        reviewId,
-      });
-      return { success: true, liked: true };
+    if (!isValidId(reviewId)) {
+      return { error: "Review not found." };
     }
-  } catch (error: any) {
+
+    const removed = await db
+      .delete(reviewLikes)
+      .where(and(eq(reviewLikes.userId, user.id), eq(reviewLikes.reviewId, reviewId)))
+      .returning({ id: reviewLikes.id });
+
+    if (removed.length > 0) {
+      return { success: true, liked: false };
+    }
+
+    await db.insert(reviewLikes).values({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      reviewId,
+    });
+    return { success: true, liked: true };
+  } catch (error) {
     console.error("Failed to toggle review like:", error);
-    return { error: error.message || "Failed to toggle like" };
+    return { error: "Failed to toggle like" };
   }
 }
 
 export async function getProductReviewsAction(productId: string) {
   try {
+    if (!isValidId(productId)) {
+      return { success: true, reviews: [] };
+    }
+
     const user = await getOrCreateDbUser();
+    const viewerId = user?.id ?? null;
 
-    // Fetch all reviews (both top-level and replies)
-    const list = await db.query.reviews.findMany({
-      where: eq(reviews.productId, productId),
-      orderBy: [desc(reviews.createdAt)],
-    });
-
-    // Populate user names / emails, like counts, and reply mapping
-    const mappedReviews = await Promise.all(
-      list.map(async (r) => {
-        // User profile
-        const u = await db.query.users.findFirst({
-          where: eq(users.id, r.userId),
-          columns: {
-            name: true,
-            email: true,
-          },
-        });
-
-        // Likes count
-        const likes = await db.query.reviewLikes.findMany({
-          where: eq(reviewLikes.reviewId, r.id),
-        });
-
-        // User liked status
-        const userLiked = user 
-          ? likes.some(l => l.userId === user.id)
-          : false;
-
-        return {
-          ...r,
-          user: u || { name: "Anonymous Builder", email: "anon@scriptly.store" },
-          likesCount: likes.length,
-          userLiked,
-        };
+    // Single query: reviews + author + like count + viewer-liked flag.
+    // Replaces the previous N+1 pattern (2 extra queries per review).
+    const rows = await db
+      .select({
+        id: reviews.id,
+        userId: reviews.userId,
+        productId: reviews.productId,
+        rating: reviews.rating,
+        comment: reviews.comment,
+        parentId: reviews.parentId,
+        createdAt: reviews.createdAt,
+        userName: users.name,
+        userEmail: users.email,
+        likesCount: sql<number>`(select count(*)::int from ${reviewLikes} where ${reviewLikes.reviewId} = ${reviews.id})`,
+        userLiked: viewerId
+          ? sql<boolean>`exists(select 1 from ${reviewLikes} where ${reviewLikes.reviewId} = ${reviews.id} and ${reviewLikes.userId} = ${viewerId})`
+          : sql<boolean>`false`,
       })
-    );
+      .from(reviews)
+      .leftJoin(users, eq(reviews.userId, users.id))
+      .where(eq(reviews.productId, productId))
+      .orderBy(desc(reviews.createdAt));
+
+    const mappedReviews = rows.map(({ userName, userEmail, likesCount, userLiked, ...r }) => ({
+      ...r,
+      user:
+        userName !== null || userEmail !== null
+          ? { name: userName, email: maskEmail(userEmail) }
+          : { name: "Anonymous Builder", email: "" },
+      likesCount: Number(likesCount) || 0,
+      userLiked: userLiked === true,
+    }));
 
     return { success: true, reviews: mappedReviews };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Failed to get product reviews:", error);
     return { error: "Failed to get reviews", reviews: [] };
   }

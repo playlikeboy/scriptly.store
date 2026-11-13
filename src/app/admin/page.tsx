@@ -1,29 +1,27 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import { requireAdminPage } from "@/app/admin/_components/require-admin";
 import Link from "next/link";
 import { db } from "@/db";
 import { orders, products, users } from "@/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
-import {
-  ArrowUpRight,
-  BarChart3,
-  CheckCircle2,
-  Clock3,
-  CreditCard,
-  DollarSign,
-  FolderKanban,
-  Package,
-  Plus,
-  ShieldAlert,
-  ShoppingCart,
-  Store,
-  Users,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ArrowRight, Package, Plus, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { ProductPagination } from "@/components/ProductPagination";
+import { formatMoney } from "@/lib/price-utils";
+import {
+  AdminEmptyState,
+  AdminFigures,
+  AdminPageHeader,
+  AdminPager,
+  AdminPanel,
+  StatusText,
+  formatAdminDate,
+  orderStatusTone,
+  parsePage,
+  td,
+  th,
+} from "@/app/admin/_components/admin-ui";
 
 export const metadata: Metadata = {
   title: "Admin Overview",
@@ -33,76 +31,40 @@ interface PageProps {
   searchParams: Promise<{ page?: string }>;
 }
 
-function inr(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(value / 100);
-}
-
-const quickActions = [
-  {
-    href: "/admin/approvals",
-    label: "Review approvals",
-    description: "Moderate incoming products",
-    icon: ShieldAlert,
-  },
-  {
-    href: "/admin/stores",
-    label: "Manage creators",
-    description: "View stores and creator accounts",
-    icon: Store,
-  },
-  {
-    href: "/admin/categories",
-    label: "Edit categories",
-    description: "Keep the catalog organized",
-    icon: FolderKanban,
-  },
-  {
-    href: "/admin/payment-links",
-    label: "Payment links",
-    description: "Create and manage payment links",
-    icon: CreditCard,
-  },
+const shortcuts = [
+  { href: "/admin/approvals", label: "Review approvals", description: "Moderate incoming creator submissions" },
+  { href: "/admin/stores", label: "Manage creators", description: "Stores, bank details and Route accounts" },
+  { href: "/admin/categories", label: "Edit categories", description: "Keep the catalog organised" },
+  { href: "/admin/payment-links", label: "Payment links", description: "Create and track payment links" },
+  { href: "/admin/payouts", label: "Payouts", description: "Settle creator balances" },
 ] as const;
 
 export default async function AdminDashboardPage({ searchParams }: PageProps) {
+  await requireAdminPage();
   const resolvedParams = await searchParams;
-  const currentPage = Math.max(1, parseInt(resolvedParams.page || "1", 10) || 1);
+  const currentPage = parsePage(resolvedParams.page);
   const limit = 8;
   const offset = (currentPage - 1) * limit;
 
-  const [
-    productCountResult,
-    completedOrderCountResult,
-    revenueResult,
-    userCountResult,
-    pendingResult,
-    creatorResult,
-    orderCountResult,
-    recentPurchases,
-  ] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(products),
+  const [statsResult, userStatsResult, pendingResult, recentPurchases] = await Promise.all([
     db
-      .select({ count: sql<number>`count(*)` })
-      .from(orders)
-      .where(eq(orders.status, "completed")),
+      .select({
+        orderRows: sql<number>`count(*)`,
+        completed: sql<number>`count(*) filter (where ${orders.status} = 'completed')`,
+        revenue: sql<number>`coalesce(sum(${orders.amount}) filter (where ${orders.status} = 'completed'), 0)`,
+        products: sql<number>`(select count(*) from ${products})`,
+      })
+      .from(orders),
     db
-      .select({ sum: sql<number>`coalesce(sum(${orders.amount}), 0)` })
-      .from(orders)
-      .where(eq(orders.status, "completed")),
-    db.select({ count: sql<number>`count(*)` }).from(users),
+      .select({
+        users: sql<number>`count(*)`,
+        creators: sql<number>`count(*) filter (where ${users.storeName} is not null)`,
+      })
+      .from(users),
     db
       .select({ count: sql<number>`count(*)` })
       .from(products)
       .where(eq(products.status, "pending")),
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(users)
-      .where(sql`store_name is not null`),
-    db.select({ count: sql<number>`count(*)` }).from(orders),
     db
       .select({
         orderId: orders.id,
@@ -121,210 +83,164 @@ export default async function AdminDashboardPage({ searchParams }: PageProps) {
       .offset(offset),
   ]);
 
-  const totalProducts = Number(productCountResult[0]?.count || 0);
-  const totalOrders = Number(completedOrderCountResult[0]?.count || 0);
-  const totalRevenue = Number(revenueResult[0]?.sum || 0);
-  const totalUsers = Number(userCountResult[0]?.count || 0);
+  const stats = statsResult[0];
+  const totalProducts = Number(stats?.products || 0);
+  const totalOrders = Number(stats?.completed || 0);
+  const totalRevenue = Number(stats?.revenue || 0);
+  const totalOrderRows = Number(stats?.orderRows || 0);
+  const totalUsers = Number(userStatsResult[0]?.users || 0);
+  const totalCreators = Number(userStatsResult[0]?.creators || 0);
   const pendingApprovals = Number(pendingResult[0]?.count || 0);
-  const totalCreators = Number(creatorResult[0]?.count || 0);
-  const totalOrderRows = Number(orderCountResult[0]?.count || 0);
   const totalPages = Math.ceil(totalOrderRows / limit);
   const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-  const stats = [
-    {
-      label: "Revenue",
-      value: inr(totalRevenue),
-      helper: `AOV ${inr(averageOrder)}`,
-      icon: DollarSign,
-    },
-    {
-      label: "Orders",
-      value: totalOrders.toLocaleString("en-IN"),
-      helper: "Completed payments",
-      icon: ShoppingCart,
-    },
-    {
-      label: "Products",
-      value: totalProducts.toLocaleString("en-IN"),
-      helper: "Catalog items",
-      icon: Package,
-    },
-    {
-      label: "Users",
-      value: totalUsers.toLocaleString("en-IN"),
-      helper: `${totalCreators.toLocaleString("en-IN")} creators`,
-      icon: Users,
-    },
-  ] as const;
-
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Control center
-          </p>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Overview</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Monitor the marketplace and jump straight into the actions that need attention.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline" className="rounded-xl">
-            <Link href="/admin/products">
-              <Package className="mr-2 h-4 w-4" />
-              Catalog
-            </Link>
-          </Button>
-          <Button asChild className="rounded-xl">
-            <Link href="/admin/products/new">
-              <Plus className="mr-2 h-4 w-4" />
-              New product
-            </Link>
-          </Button>
-        </div>
-      </header>
-
-      {pendingApprovals > 0 && (
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-              <div>
-                <p className="text-sm font-semibold">
-                  {pendingApprovals} product{pendingApprovals === 1 ? "" : "s"} need approval
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Review submissions before publishing them to the marketplace.
-                </p>
-              </div>
-            </div>
-            <Button asChild variant="outline" size="sm" className="rounded-lg">
-              <Link href="/admin/approvals">
-                Review queue <ArrowUpRight className="ml-1.5 h-3.5 w-3.5" />
+    <div className="space-y-8">
+      <AdminPageHeader
+        title="Overview"
+        description="Monitor the marketplace and jump straight into the work that needs attention."
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link href="/admin/products">
+                <Package aria-hidden="true" />
+                Catalog
               </Link>
             </Button>
+            <Button asChild>
+              <Link href="/admin/products/new">
+                <Plus aria-hidden="true" />
+                New product
+              </Link>
+            </Button>
+          </>
+        }
+      />
+
+      {pendingApprovals > 0 ? (
+        <div
+          role="status"
+          className="flex flex-col gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+        >
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {pendingApprovals.toLocaleString("en-IN")} product{pendingApprovals === 1 ? "" : "s"} waiting for approval
+            </p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Review submissions before they are published to the marketplace.
+            </p>
           </div>
-        </Card>
-      )}
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card key={stat.label} className="border-border/60 bg-card/45">
-              <div className="p-4 sm:p-5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-muted-foreground">{stat.label}</span>
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/70">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                </div>
-                <div className="mt-4 text-2xl font-bold tracking-tight">{stat.value}</div>
-                <p className="mt-1 text-[11px] text-muted-foreground">{stat.helper}</p>
-              </div>
-            </Card>
-          );
-        })}
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="overflow-hidden border-border/60 bg-card/40">
-          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3.5 sm:px-5">
-            <div>
-              <h2 className="text-sm font-semibold">Recent activity</h2>
-              <p className="text-[11px] text-muted-foreground">Latest checkout activity across the store.</p>
-            </div>
-            <Link
-              href="/admin/orders"
-              className="text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
-            >
-              View orders
+          <Button asChild variant="outline" size="sm" className="self-start sm:self-auto">
+            <Link href="/admin/approvals">
+              Open review queue
+              <ArrowRight aria-hidden="true" />
             </Link>
-          </div>
+          </Button>
+        </div>
+      ) : null}
 
-          <div className="divide-y divide-border/50">
-            {recentPurchases.map((purchase) => (
-              <div key={purchase.orderId} className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  {purchase.status === "completed" ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  ) : (
-                    <Clock3 className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{purchase.productTitle}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {purchase.customerName || purchase.customerEmail}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold tabular-nums">{inr(purchase.amount)}</p>
-                  <Badge
-                    variant="outline"
-                    className={[
-                      "mt-1 rounded-full px-2 py-0.5 text-[10px]",
-                      purchase.status === "completed"
-                        ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-500"
-                        : "border-border/70 text-muted-foreground",
-                    ].join(" ")}
-                  >
-                    {purchase.status}
-                  </Badge>
-                </div>
+      <AdminFigures
+        items={[
+          { label: "Revenue", value: formatMoney(totalRevenue), hint: `Avg. order ${formatMoney(averageOrder)}` },
+          { label: "Completed orders", value: totalOrders.toLocaleString("en-IN"), hint: `${totalOrderRows.toLocaleString("en-IN")} total checkouts` },
+          { label: "Products", value: totalProducts.toLocaleString("en-IN"), hint: "Catalog items" },
+          { label: "Users", value: totalUsers.toLocaleString("en-IN"), hint: `${totalCreators.toLocaleString("en-IN")} creators` },
+        ]}
+      />
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <AdminPanel
+          title="Recent orders"
+          description="Latest checkout activity across the store."
+          actions={
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/admin/orders">
+                All orders
+                <ArrowRight aria-hidden="true" />
+              </Link>
+            </Button>
+          }
+        >
+          {recentPurchases.length === 0 ? (
+            <AdminEmptyState
+              icon={ShoppingCart}
+              title="No orders yet"
+              description="Orders will appear here as customers purchase products."
+            />
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-border">
+                    <tr>
+                      <th scope="col" className={th}>Product</th>
+                      <th scope="col" className={`${th} hidden md:table-cell`}>Customer</th>
+                      <th scope="col" className={`${th} hidden sm:table-cell`}>Status</th>
+                      <th scope="col" className={`${th} text-right`}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {recentPurchases.map((purchase) => (
+                      <tr key={purchase.orderId} className="transition-colors hover:bg-secondary/40">
+                        <td className={`${td} max-w-0 w-full`}>
+                          <p className="truncate font-medium text-foreground">{purchase.productTitle}</p>
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            <span className="md:hidden">{purchase.customerName || purchase.customerEmail} · </span>
+                            {formatAdminDate(purchase.createdAt, true)}
+                          </p>
+                        </td>
+                        <td className={`${td} hidden max-w-[220px] md:table-cell`}>
+                          <p className="truncate text-foreground">{purchase.customerName || "Member"}</p>
+                          <p className="truncate text-xs text-muted-foreground">{purchase.customerEmail}</p>
+                        </td>
+                        <td className={`${td} hidden sm:table-cell`}>
+                          <StatusText tone={orderStatusTone(purchase.status)} className="capitalize">
+                            {purchase.status}
+                          </StatusText>
+                        </td>
+                        <td className={`${td} text-right font-medium whitespace-nowrap tabular-nums`}>
+                          {formatMoney(purchase.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
-
-            {recentPurchases.length === 0 && (
-              <div className="px-5 py-14 text-center">
-                <BarChart3 className="mx-auto mb-2 h-7 w-7 text-muted-foreground/30" />
-                <p className="text-sm font-semibold">No activity yet</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Orders will appear here as customers purchase products.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-              <ProductPagination totalPages={totalPages} currentPage={currentPage} />
-            </div>
+              <AdminPager
+                basePath="/admin"
+                params={{}}
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalCount={totalOrderRows}
+                pageSize={limit}
+                noun="orders"
+              />
+            </>
           )}
-        </Card>
+        </AdminPanel>
 
-        <Card className="border-border/60 bg-card/40">
-          <div className="border-b border-border/60 px-4 py-3.5">
-            <h2 className="text-sm font-semibold">Quick actions</h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">Common admin workflows.</p>
-          </div>
-          <div className="grid gap-2 p-3">
-            {quickActions.map((action) => {
-              const Icon = action.icon;
-              return (
+        <AdminPanel title="Shortcuts">
+          <ul className="divide-y divide-border">
+            {shortcuts.map((item) => (
+              <li key={item.href}>
                 <Link
-                  key={action.href}
-                  href={action.href}
-                  className="group flex items-center gap-3 rounded-xl border border-transparent p-3 transition-colors hover:border-border/60 hover:bg-muted/50"
+                  href={item.href}
+                  className="group flex items-center gap-3 px-4 py-3 transition-colors outline-none hover:bg-secondary/40 focus-visible:bg-secondary/60 sm:px-5"
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                    <Icon className="h-4 w-4" />
-                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold">{action.label}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
-                      {action.description}
-                    </span>
+                    <span className="block text-sm font-medium text-foreground">{item.label}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{item.description}</span>
                   </span>
-                  <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  <ArrowRight
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-foreground"
+                  />
                 </Link>
-              );
-            })}
-          </div>
-        </Card>
-      </section>
+              </li>
+            ))}
+          </ul>
+        </AdminPanel>
+      </div>
     </div>
   );
 }

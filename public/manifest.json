@@ -1,11 +1,11 @@
 {
   "name": "ScriptlyStore",
   "short_name": "ScriptlyStore",
-  "description": "Premium Digital Product Marketplace",
+  "description": "A curated marketplace for production-ready code.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#F7F6F2",
+  "theme_color": "#17140F",
   "icons": [
     {
       "src": "/favicon.svg",
@@ -25,5 +25,10 @@
       "type": "image/png",
       "purpose": "any"
     }
+  ],
+  "categories": [
+    "developer",
+    "shopping",
+    "productivity"
   ]
 }

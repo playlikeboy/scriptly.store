@@ -1,24 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { Menu, Search } from "lucide-react";
 import AuthButtons from "@/components/AuthButtons";
 import CartIcon from "@/components/CartIcon";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Sheet, SheetContent, SheetTrigger, SheetClose } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Menu, Terminal, Search } from "lucide-react";
-import { MAIN_NAVIGATION } from "@/config/navigation";
+import { MAIN_NAVIGATION, SELL_LINK } from "@/config/navigation";
+
+function isActivePath(pathname: string, href: string) {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function Wordmark({ className }: { className?: string }) {
+  return (
+    <span className={cn("font-display text-[22px] font-semibold leading-none tracking-[-0.02em] text-foreground", className)}>
+      Scriptly<span className="text-muted-foreground">.store</span>
+    </span>
+  );
+}
 
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [scrolled, setScrolled] = useState(false);
 
+  // Cmd/Ctrl+K opens search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         router.push("/search");
       }
@@ -27,125 +49,128 @@ export default function Navbar() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [router]);
 
+  // Hairline appears only once the page has scrolled
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/85 backdrop-blur-md transition-colors">
-      <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
-        {/* Brand & Desktop Navigation */}
-        <div className="flex items-center gap-6 md:gap-8">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight text-foreground transition-opacity hover:opacity-90">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-foreground text-background">
-              <Terminal className="h-4 w-4" />
-            </div>
-            <span className="text-base font-bold tracking-tight">
-              scriptly<span className="text-primary font-mono text-sm">.store</span>
-            </span>
-          </Link>
+    <header
+      className={cn(
+        "sticky top-0 z-50 w-full border-b bg-background transition-[border-color] duration-200 ease-out",
+        scrolled ? "border-border" : "border-transparent"
+      )}
+    >
+      <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6 lg:px-8">
+        <Link
+          href="/"
+          aria-label="Scriptly.store home"
+          className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        >
+          <Wordmark />
+        </Link>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {MAIN_NAVIGATION.map((item) => {
-              const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
-                    isActive
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                  )}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
+        <nav aria-label="Primary" className="ml-4 hidden items-center gap-1 md:flex">
+          {MAIN_NAVIGATION.map((item) => {
+            const active = isActivePath(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "rounded-lg px-3 py-2 text-sm transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-        {/* Right Utilities & Actions */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Compact ⌘K Search Trigger */}
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <Link
             href="/search"
-            aria-label="Search products"
-            className="hidden sm:flex items-center gap-2 h-8 px-2.5 rounded-xl border border-border/70 bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/60 hover:border-border transition-all text-xs group"
+            className="hidden h-9 w-56 items-center gap-2 rounded-[10px] border border-input bg-card px-3 text-sm text-muted-foreground transition-colors duration-150 outline-none hover:border-foreground/25 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:flex"
           >
-            <Search className="h-3.5 w-3.5 group-hover:text-primary transition-colors" />
-            <span className="text-[11px] font-medium">Search products...</span>
-            <kbd className="pointer-events-none inline-flex h-4 select-none items-center gap-0.5 rounded border border-border/80 bg-background px-1.5 font-mono text-[9px] font-semibold text-muted-foreground">
+            <Search className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            <span className="flex-1">Search the catalogue</span>
+            <kbd className="pointer-events-none rounded border border-border px-1.5 font-mono text-[10px] leading-4 text-muted-foreground">
               ⌘K
             </kbd>
           </Link>
 
-          {/* Mobile Search Icon */}
+          <Button asChild variant="ghost" size="icon-sm" className="lg:hidden">
+            <Link href="/search" aria-label="Search the catalogue">
+              <Search className="size-4" strokeWidth={1.75} />
+            </Link>
+          </Button>
+
           <Link
-            href="/search"
-            aria-label="Search products"
-            className="flex sm:hidden h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            href={SELL_LINK.href}
+            className="hidden rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring xl:inline-flex"
           >
-            <Search className="h-4 w-4" />
+            {SELL_LINK.label}
           </Link>
 
-          <div className="h-4 w-px bg-border/60" />
-
           <ThemeToggle />
-
           <CartIcon />
 
           <div className="hidden sm:block">
-            <Suspense fallback={<div className="h-8 w-16 animate-pulse rounded-lg bg-muted" />}>
+            <Suspense fallback={<div className="h-8 w-28 rounded-lg bg-muted" />}>
               <AuthButtons />
             </Suspense>
           </div>
 
-          {/* Mobile Navigation Drawer */}
-          <div className="md:hidden">
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                  <Menu className="h-4 w-4" />
-                  <span className="sr-only">Toggle navigation menu</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-72 p-6 flex flex-col justify-between">
-                <div className="space-y-6">
-                  <div className="flex items-center gap-2 border-b border-border/60 pb-4">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-foreground text-background">
-                      <Terminal className="h-4 w-4" />
-                    </div>
-                    <span className="font-bold text-sm">ScriptlyStore</span>
-                  </div>
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Open menu">
+                <Menu className="size-4" strokeWidth={1.75} />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="flex flex-col gap-0 bg-background p-0 data-[side=right]:w-80 data-[side=right]:max-w-[85vw]">
+              <div className="border-b border-border px-5 py-4">
+                <SheetTitle asChild>
+                  <span><Wordmark /></span>
+                </SheetTitle>
+                <SheetDescription className="sr-only">Site navigation</SheetDescription>
+              </div>
 
-                  <nav className="flex flex-col space-y-1">
-                    {MAIN_NAVIGATION.map((item) => {
-                      const isActive = pathname === item.href;
-                      return (
-                        <SheetClose asChild key={item.href}>
-                          <Link
-                            href={item.href}
-                            className={cn(
-                              "rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
-                              isActive
-                                ? "bg-secondary text-foreground"
-                                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                            )}
-                          >
-                            {item.label}
-                          </Link>
-                        </SheetClose>
-                      );
-                    })}
-                  </nav>
-                </div>
+              <nav aria-label="Mobile" className="flex flex-1 flex-col overflow-y-auto px-3 py-4">
+                {[...MAIN_NAVIGATION, { href: "/search", label: "Search" }, SELL_LINK].map((item) => {
+                  const active = isActivePath(pathname, item.href);
+                  return (
+                    <SheetClose asChild key={item.href}>
+                      <Link
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "rounded-lg px-3 py-3 text-base transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-secondary font-medium text-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        )}
+                      >
+                        {item.label}
+                      </Link>
+                    </SheetClose>
+                  );
+                })}
+              </nav>
 
-                <div className="border-t border-border/60 pt-4">
-                  <Suspense fallback={null}>
-                    <AuthButtons />
-                  </Suspense>
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
+              <div className="border-t border-border px-5 py-4">
+                <Suspense fallback={null}>
+                  <AuthButtons layout="stacked" />
+                </Suspense>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
     </header>

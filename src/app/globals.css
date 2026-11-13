@@ -7,9 +7,11 @@
 @theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
-	--font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-	--font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-	--font-heading: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, monospace;
+	--font-heading: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+	--font-display: var(--font-newsreader), ui-serif, Georgia, serif;
+	--color-success: var(--success);
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,48 +50,52 @@
 }
 
 :root {
-  --background: #FFFFFF;
-  --foreground: #0F172A; /* Slate 900 */
-  --card: #FFFFFF;
-  --card-foreground: #0F172A;
-  --popover: #FFFFFF;
-  --popover-foreground: #0F172A;
-  --primary: #0284C7; /* Refined Technical Sky Blue */
-  --primary-foreground: #FFFFFF;
-  --secondary: #F1F5F9; /* Slate 100 */
-  --secondary-foreground: #0F172A;
-  --muted: #F8FAFC; /* Slate 50 */
-  --muted-foreground: #64748B; /* Slate 500 */
-  --accent: #F1F5F9;
-  --accent-foreground: #0F172A;
-  --destructive: #EF4444; /* Rose 500 */
-  --destructive-foreground: #FFFFFF;
-  --border: #E2E8F0; /* Slate 200 */
-  --input: #E2E8F0;
-  --ring: #0284C7;
-  --radius: 0.5rem;
+  /* Paper & ink — warm editorial neutrals */
+  --background: #F7F6F2;
+  --foreground: #17140F;
+  --card: #FFFEFB;
+  --card-foreground: #17140F;
+  --popover: #FFFEFB;
+  --popover-foreground: #17140F;
+  /* Ember — the single committed accent: purchase, links, focus */
+  --primary: #C2410C;
+  --primary-foreground: #FFFBF5;
+  --secondary: #EFEDE6;
+  --secondary-foreground: #17140F;
+  --muted: #F0EEE8;
+  --muted-foreground: #645E54;
+  --accent: #EFEDE6;
+  --accent-foreground: #17140F;
+  --destructive: #B42318;
+  --destructive-foreground: #FFFBF5;
+  --success: #1F7A4D;
+  --border: #E2DED4;
+  --input: #D9D4C8;
+  --ring: #C2410C;
+  --radius: 0.625rem;
 }
 
 .dark {
-  --background: #090D12; /* Clean deep technical slate */
-  --foreground: #F8FAFC; /* Slate 50 */
-  --card: #0F1722; /* Elevated navy-slate */
-  --card-foreground: #F8FAFC;
-  --popover: #0F1722;
-  --popover-foreground: #F8FAFC;
-  --primary: #38BDF8; /* Radiant technical sky */
-  --primary-foreground: #090D12;
-  --secondary: #16202D;
-  --secondary-foreground: #F8FAFC;
-  --muted: #131B26;
-  --muted-foreground: #94A3B8; /* Slate 400 */
-  --accent: #16202D;
-  --accent-foreground: #F8FAFC;
-  --destructive: #F87171;
-  --destructive-foreground: #090D12;
-  --border: #1E293B; /* Slate 800 */
-  --input: #1E293B;
-  --ring: #38BDF8;
+  --background: #12110F;
+  --foreground: #F2EFE8;
+  --card: #1A1916;
+  --card-foreground: #F2EFE8;
+  --popover: #1D1B18;
+  --popover-foreground: #F2EFE8;
+  --primary: #FF8A4C;
+  --primary-foreground: #1A0E06;
+  --secondary: #23211D;
+  --secondary-foreground: #F2EFE8;
+  --muted: #1E1C19;
+  --muted-foreground: #A39D92;
+  --accent: #23211D;
+  --accent-foreground: #F2EFE8;
+  --destructive: #F97066;
+  --destructive-foreground: #1A0E06;
+  --success: #4ADE9B;
+  --border: #2E2B26;
+  --input: #3A3631;
+  --ring: #FF8A4C;
 }
 
 @layer base {
@@ -98,15 +104,34 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-feature-settings: "ss01", "cv11";
+    caret-color: var(--primary);
   }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+    color: var(--foreground);
+  }
+  a { text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+  .tabular, [data-price] { font-variant-numeric: tabular-nums; }
+}
+
+/* Editorial display voice — serif headlines only, never body */
+.font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+  font-weight: 500;
 }
 
 /* Accessible focus ring style */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+  border-radius: 4px;
 }
+html { scrollbar-color: var(--input) transparent; }
 
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
@@ -177,14 +202,14 @@
 
 /* Minimal Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--input);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {

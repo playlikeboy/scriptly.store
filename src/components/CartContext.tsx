@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 
 export interface CartItem {
   id: string;
@@ -52,42 +52,45 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, [cart, loaded]);
 
-  const addToCart = (item: CartItem) => {
+  // Stable callbacks + memoized value so consumers (every ProductCard) only
+  // re-render when the cart actually changes.
+  const addToCart = useCallback((item: CartItem) => {
     setCart((prev) => {
       if (prev.some((i) => i.id === item.id)) {
         return prev; // Item already in cart
       }
       return [...prev, item];
     });
-  };
+  }, []);
 
-  const removeFromCart = (itemId: string) => {
+  const removeFromCart = useCallback((itemId: string) => {
     setCart((prev) => prev.filter((item) => item.id !== itemId));
-  };
+  }, []);
 
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     setCart([]);
-  };
+  }, []);
 
-  const isInCart = (itemId: string) => {
-    return cart.some((item) => item.id === itemId);
-  };
+  const isInCart = useCallback(
+    (itemId: string) => cart.some((item) => item.id === itemId),
+    [cart]
+  );
 
-  const cartCount = cart.length;
-  const cartSubtotal = cart.reduce((sum, item) => sum + item.price, 0);
+  const value = useMemo<CartContextType>(
+    () => ({
+      cart,
+      addToCart,
+      removeFromCart,
+      clearCart,
+      isInCart,
+      cartCount: cart.length,
+      cartSubtotal: cart.reduce((sum, item) => sum + item.price, 0),
+    }),
+    [cart, addToCart, removeFromCart, clearCart, isInCart]
+  );
 
   return (
-    <CartContext.Provider
-      value={{
-        cart,
-        addToCart,
-        removeFromCart,
-        clearCart,
-        isInCart,
-        cartCount,
-        cartSubtotal,
-      }}
-    >
+    <CartContext.Provider value={value}>
       {children}
     </CartContext.Provider>
   );

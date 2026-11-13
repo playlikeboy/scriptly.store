@@ -1,25 +1,41 @@
+import { cache } from "react";
 import { Metadata } from "next";
-import { db } from "@/db";
-import { users, products, coupons } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
 import { notFound } from "next/navigation";
-import { ProductCard } from "@/components/SearchFilter";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Landmark, ArrowLeft, Code, Tag, ShoppingBag, Globe } from "lucide-react";
-import Link from "next/link";
+import { db } from "@/db";
+import { users, products, coupons, categories } from "@/db/schema";
+import { eq, and, desc, sql } from "drizzle-orm";
+import { formatMoney } from "@/lib/price-utils";
+import {
+  CatalogEmpty,
+  CatalogHeader,
+  CatalogPagination,
+  CatalogShell,
+  ProductGrid,
+  ResultCount,
+  categoryNameMap,
+  parsePage,
+} from "@/app/explore/_components/catalog";
 
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 24;
+
 interface StorePageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ page?: string }>;
 }
+
+// One creator lookup per request, shared by generateMetadata and the page.
+const getCreator = cache(async (id: string) =>
+  db.query.users.findFirst({
+    where: eq(users.id, id),
+    columns: { id: true, name: true, storeName: true, razorpayAccountId: true },
+  })
+);
 
 export async function generateMetadata({ params }: StorePageProps): Promise<Metadata> {
   const { id } = await params;
-  const creator = await db.query.users.findFirst({
-    where: eq(users.id, id),
-  });
+  const creator = await getCreator(id);
 
   if (!creator) {
     return {
@@ -35,153 +51,129 @@ export async function generateMetadata({ params }: StorePageProps): Promise<Meta
   };
 }
 
-export default async function CreatorStorefrontPage({ params }: StorePageProps) {
+export default async function CreatorStorefrontPage({ params, searchParams }: StorePageProps) {
   const { id } = await params;
+  const { page } = await searchParams;
+  const currentPage = parsePage(page);
 
-  // 1. Fetch Creator details
-  const creator = await db.query.users.findFirst({
-    where: eq(users.id, id),
-  });
+  const creator = await getCreator(id);
 
-  // Redirect to notFound only if the user doesn't exist at all
+  // notFound only if the user doesn't exist at all
   if (!creator) {
     notFound();
   }
 
   const displayName = creator.storeName || creator.name || "Creator's Store";
+  const storeWhere = and(
+    eq(products.creatorId, id),
+    eq(products.status, "approved"),
+    eq(products.published, true)
+  );
 
-  // 2. Fetch Creator's approved & published products
-  const storeProducts = await db.query.products.findMany({
-    where: and(
-      eq(products.creatorId, id),
-      eq(products.status, "approved"),
-      eq(products.published, true)
-    ),
-    orderBy: desc(products.createdAt),
-  });
+  // Paginated listing + count + coupons + category names, all in parallel and pushed down to SQL.
+  const [storeProducts, countRows, activeCoupons, categoryRows] = await Promise.all([
+    db
+      .select()
+      .from(products)
+      .where(storeWhere)
+      .orderBy(desc(products.createdAt))
+      .limit(PAGE_SIZE)
+      .offset((currentPage - 1) * PAGE_SIZE),
+    db.select({ count: sql<number>`count(*)` }).from(products).where(storeWhere),
+    db
+      .select({
+        id: coupons.id,
+        code: coupons.code,
+        discountType: coupons.discountType,
+        discountValue: coupons.discountValue,
+        minPurchaseAmount: coupons.minPurchaseAmount,
+      })
+      .from(coupons)
+      .where(and(eq(coupons.creatorId, id), eq(coupons.active, true)))
+      .orderBy(desc(coupons.createdAt)),
+    db.select({ slug: categories.slug, name: categories.name }).from(categories),
+  ]);
 
-  // 3. Fetch Creator's active coupons
-  const activeCoupons = await db.query.coupons.findMany({
-    where: and(
-      eq(coupons.creatorId, id),
-      eq(coupons.active, true)
-    ),
-    orderBy: desc(coupons.createdAt),
-  });
+  const total = Number(countRows[0]?.count ?? 0);
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
-    <div className="flex flex-col min-h-screen">
-      
-      {/* Visual Header Banner */}
-      <div className="w-full bg-neutral-950 border-b border-border/40 py-16 md:py-24 relative overflow-hidden">
-        {/* Glow Effects */}
-        <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute top-1/2 right-1/4 -translate-y-1/2 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="container max-w-7xl mx-auto px-4 space-y-6 relative z-10">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to Explore
-          </Link>
-
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                  <Landmark className="w-8 h-8" />
-                </div>
-                <div className="space-y-1">
-                  <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-white">
-                    {displayName}
-                  </h1>
-                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Code className="w-3.5 h-3.5" />
-                      Creator ID: {creator.id.slice(0, 8)}...
-                    </span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <ShoppingBag className="w-3.5 h-3.5" />
-                      {storeProducts.length} Listings
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Split Route Active Indicator */}
+    <CatalogShell>
+      <CatalogHeader
+        breadcrumbs={[{ label: "Home", href: "/" }, { label: "Explore", href: "/explore" }, { label: displayName }]}
+        title={displayName}
+        description={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="tabular-nums">
+              {total.toLocaleString("en-IN")} {total === 1 ? "listing" : "listings"}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Creator ID <span className="font-mono text-[13px]">{creator.id.slice(0, 8)}</span>
+            </span>
             {creator.razorpayAccountId && (
-              <Badge variant="outline" className="h-7 px-3 rounded-full font-bold uppercase tracking-widest text-[9px] bg-emerald-500/5 text-emerald-400 border-emerald-500/20 flex items-center gap-1.5 self-start md:self-center">
-                <Globe className="w-3.5 h-3.5" />
-                Automated Split routing Active
-              </Badge>
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-success">Automated split routing active</span>
+              </>
             )}
-          </div>
-        </div>
-      </div>
+          </span>
+        }
+      />
 
-      <div className="container max-w-7xl mx-auto px-4 py-12 md:py-16 space-y-16">
-        
-        {/* Dynamic Promotions / Coupons */}
-        {activeCoupons.length > 0 && (
-          <section className="space-y-6">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xs font-black uppercase tracking-[0.2em] text-neutral-500 flex items-center gap-1.5">
-                <Tag className="w-4 h-4 text-purple-400" />
-                Active Store Promos
-              </h2>
-              <div className="h-px flex-1 bg-neutral-900" />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              {activeCoupons.map((coupon) => (
-                <Card key={coupon.id} className="border-border/40 bg-neutral-950/40 backdrop-blur-sm rounded-2xl relative overflow-hidden select-none hover:border-purple-500/20 transition-all duration-300">
-                  <CardContent className="p-4 flex flex-col gap-2">
-                    <div className="flex justify-between items-center gap-2">
-                      <Badge className="font-mono text-xs tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                        {coupon.code}
-                      </Badge>
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase">
-                        {coupon.discountType === "percentage" ? `${coupon.discountValue}% Off` : `$${(coupon.discountValue / 100).toFixed(0)} Off`}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground font-medium leading-relaxed">
-                      Applies on all items in this store. Min Purchase: ${(coupon.minPurchaseAmount / 100).toFixed(2)} USD.
-                    </p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Catalog */}
-        <section className="space-y-8">
-          <div className="flex items-center gap-4">
-            <h2 className="text-xs font-black uppercase tracking-[0.2em] text-neutral-500">
-              Catalog Items
-            </h2>
-            <div className="h-px flex-1 bg-neutral-900" />
-          </div>
-
-          {storeProducts.length === 0 ? (
-            <div className="py-16 text-center border border-dashed border-neutral-900 rounded-3xl">
-              <p className="text-xs font-black uppercase tracking-widest text-muted-foreground">
-                No items currently published on this storefront
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-              {storeProducts.map((prod) => (
-                <ProductCard key={prod.id} prod={prod} categoryName={prod.category} />
-              ))}
-            </div>
-          )}
+      {activeCoupons.length > 0 && (
+        <section aria-labelledby="store-promos" className="mb-10">
+          <h2 id="store-promos" className="mb-4 text-xl font-medium tracking-[-0.01em]">
+            Store promos
+          </h2>
+          <ul className="divide-y divide-border border-y border-border">
+            {activeCoupons.map((coupon) => (
+              <li key={coupon.id} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-3">
+                <span className="flex items-baseline gap-3">
+                  <span className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[13px] text-foreground">
+                    {coupon.code}
+                  </span>
+                  <span className="text-sm font-medium tabular-nums">
+                    {coupon.discountType === "percentage"
+                      ? `${coupon.discountValue}% off`
+                      : `${formatMoney(coupon.discountValue)} off`}
+                  </span>
+                </span>
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  Applies to all items in this store
+                  {coupon.minPurchaseAmount > 0 && ` · min. purchase ${formatMoney(coupon.minPurchaseAmount)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
+      )}
 
-      </div>
-    </div>
+      <section aria-labelledby="store-catalog">
+        <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2 border-t border-border pt-6">
+          <h2 id="store-catalog" className="text-xl font-medium tracking-[-0.01em]">
+            Catalog
+          </h2>
+          <ResultCount total={total} page={currentPage} limit={PAGE_SIZE} />
+        </div>
+
+        {storeProducts.length === 0 ? (
+          <CatalogEmpty
+            title={total === 0 ? "No items published yet" : "This page is empty"}
+            body={
+              total === 0
+                ? "This creator has not published anything on their storefront yet."
+                : "There are fewer listings than this page number."
+            }
+            action={total === 0 ? { href: "/explore", label: "Explore the marketplace" } : { href: `/stores/${id}`, label: "Back to first page" }}
+          />
+        ) : (
+          <>
+            <ProductGrid products={storeProducts} categoryNames={categoryNameMap(categoryRows)} />
+            <CatalogPagination totalPages={totalPages} currentPage={currentPage} />
+          </>
+        )}
+      </section>
+    </CatalogShell>
   );
 }

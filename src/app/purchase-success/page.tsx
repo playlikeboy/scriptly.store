@@ -1,19 +1,21 @@
 import { Metadata } from "next";
 import { db } from "@/db";
+import { orders, products } from "@/db/schema";
+import { and, asc, eq } from "drizzle-orm";
+import { redirect } from "next/navigation";
+import Link from "next/link";
+import { CircleCheck, Download, FileText, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { getOrCreateDbUser } from "@/lib/auth-utils";
+import { formatMoney } from "@/lib/price-utils";
 
 export const metadata: Metadata = {
   title: "Purchase Successful",
   description: "Your purchase was successful! Download your files from your ScriptlyStore dashboard.",
+  robots: { index: false, follow: false },
 };
 
-import { orders, products } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { redirect } from "next/navigation";
-import Link from "next/link";
-import { CheckCircle2, Download, Home, ArrowRight, FileText } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+export const dynamic = "force-dynamic";
 
 interface PageProps {
   searchParams: Promise<{
@@ -21,21 +23,41 @@ interface PageProps {
   }>;
 }
 
+const formatAmount = (paise: number) => (paise <= 0 ? "Free" : formatMoney(paise));
+
 export default async function PurchaseSuccessPage({ searchParams }: PageProps) {
-  const resolvedParams = await searchParams;
-  const orderId = resolvedParams.orderId;
+  const { orderId } = await searchParams;
 
   if (!orderId) {
     redirect("/");
   }
 
-  // Fetch the order and product
-  const results = await db
+  const user = await getOrCreateDbUser();
+  if (!user) {
+    redirect(`/handler/sign-in?redirectTo=${encodeURIComponent(`/purchase-success?orderId=${orderId}`)}`);
+  }
+
+  const [anchor] = await db
+    .select({
+      userId: orders.userId,
+      status: orders.status,
+      razorpayOrderId: orders.razorpayOrderId,
+    })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+
+  // Receipts are private: only the buyer (or an admin) may view them.
+  if (!anchor || anchor.status !== "completed" || (anchor.userId !== user.id && user.role !== "admin")) {
+    redirect("/dashboard");
+  }
+
+  // A cart checkout creates one order row per product under the same gateway order.
+  const lineItems = await db
     .select({
       orderId: orders.id,
       amount: orders.amount,
       paymentId: orders.razorpayPaymentId,
-      status: orders.status,
       addOnEditCopy: orders.addOnEditCopy,
       addOnSetupDeploy: orders.addOnSetupDeploy,
       product: {
@@ -47,116 +69,139 @@ export default async function PurchaseSuccessPage({ searchParams }: PageProps) {
     })
     .from(orders)
     .innerJoin(products, eq(orders.productId, products.id))
-    .where(eq(orders.id, orderId))
-    .limit(1);
+    .where(
+      anchor.razorpayOrderId
+        ? and(
+            eq(orders.razorpayOrderId, anchor.razorpayOrderId),
+            eq(orders.userId, anchor.userId),
+            eq(orders.status, "completed")
+          )
+        : eq(orders.id, orderId)
+    )
+    .orderBy(asc(orders.createdAt));
 
-  const receipt = results[0];
-
-  if (!receipt || receipt.status !== "completed") {
+  if (lineItems.length === 0) {
     redirect("/dashboard");
   }
 
-  const editCopyPrice = receipt.addOnEditCopy ? Math.round(receipt.product.price / 3) : 0;
-  const setupDeployPrice = receipt.addOnSetupDeploy ? Math.round(receipt.product.price / 3) : 0;
-  const baseProductPaid = receipt.amount - editCopyPrice - setupDeployPrice;
+  const totalPaid = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const paymentId = lineItems[0].paymentId;
+  const isMulti = lineItems.length > 1;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-12">
-      
-      {/* Success Animation Header */}
-      <div className="space-y-4">
-        <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-          <CheckCircle2 className="w-10 h-10 text-primary" />
-        </div>
-        <h1 className="text-3xl font-semibold text-foreground tracking-tight">
-          Purchase Confirmed
-        </h1>
-        <p className="text-muted-foreground max-w-sm mx-auto text-sm leading-relaxed">
+    <div className="bg-background text-foreground">
+      <div className="mx-auto max-w-2xl px-4 py-12 sm:px-6 md:py-20">
+        <CircleCheck className="size-8 text-success" strokeWidth={1.75} aria-hidden="true" />
+        <h1 className="mt-5 font-display text-3xl text-foreground md:text-4xl">Purchase confirmed</h1>
+        <p className="mt-3 max-w-[60ch] text-base leading-relaxed text-muted-foreground">
           Your payment has been processed and your digital assets are ready for download.
         </p>
-      </div>
 
-      {/* Invoice Card */}
-      <Card className="border-border bg-card/50 text-left overflow-hidden">
-        <CardHeader className="bg-muted/30">
-          <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Transaction Receipt
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-6 space-y-4">
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Product</span>
-              <span className="text-foreground font-medium">{receipt.product.title}</span>
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground pl-3">
-              <span>Base Product</span>
-              <span className="font-semibold">${(baseProductPaid / 100).toFixed(2)}</span>
-            </div>
-            {receipt.addOnEditCopy && (
-              <div className="flex justify-between text-xs text-muted-foreground pl-3">
-                <span>+ Edit Copy & Content Support Add-on</span>
-                <span className="font-mono font-semibold">${(editCopyPrice / 100).toFixed(2)}</span>
+        <section aria-labelledby="receipt-heading" className="mt-10 rounded-2xl border border-border bg-card">
+          <h2 id="receipt-heading" className="sr-only">
+            Transaction receipt
+          </h2>
+          <ul className="divide-y divide-border">
+            {lineItems.map((item) => {
+              const editCopyPrice = item.addOnEditCopy ? Math.round(item.product.price / 3) : 0;
+              const setupDeployPrice = item.addOnSetupDeploy ? Math.round(item.product.price / 3) : 0;
+              const baseProductPaid = item.amount - editCopyPrice - setupDeployPrice;
+
+              return (
+                <li key={item.orderId} className="p-5 sm:p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/products/${item.product.slug}`}
+                        className="font-medium text-foreground hover:text-primary transition-colors"
+                      >
+                        {item.product.title}
+                      </Link>
+                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                        Order {item.orderId.slice(0, 12).toUpperCase()}
+                      </p>
+                    </div>
+                    <Button asChild size="sm">
+                      <a href={`/api/download/${item.product.id}`}>
+                        <Download strokeWidth={1.75} aria-hidden="true" />
+                        Download
+                      </a>
+                    </Button>
+                  </div>
+
+                  {(item.addOnEditCopy || item.addOnSetupDeploy) && (
+                    <dl className="mt-4 space-y-1.5 text-sm">
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted-foreground">Base product</dt>
+                        <dd className="tabular text-foreground">{formatAmount(baseProductPaid)}</dd>
+                      </div>
+                      {item.addOnEditCopy && (
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Edit copy & content support</dt>
+                          <dd className="tabular text-foreground">{formatMoney(editCopyPrice)}</dd>
+                        </div>
+                      )}
+                      {item.addOnSetupDeploy && (
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-muted-foreground">Setup & deployment support</dt>
+                          <dd className="tabular text-foreground">{formatMoney(setupDeployPrice)}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+
+                  {isMulti && (
+                    <p className="mt-3 text-right text-sm">
+                      <span className={item.amount <= 0 ? "tabular text-success" : "tabular text-foreground"}>
+                        {formatAmount(item.amount)}
+                      </span>
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          <dl className="space-y-2 border-t border-border p-5 text-sm sm:p-6">
+            {paymentId && (
+              <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                <dt className="text-muted-foreground">Payment ID</dt>
+                <dd className="break-all font-mono text-xs text-foreground">{paymentId}</dd>
               </div>
             )}
-            {receipt.addOnSetupDeploy && (
-              <div className="flex justify-between text-xs text-muted-foreground pl-3">
-                <span>+ Setup & Deployment Support Add-on</span>
-                <span className="font-mono font-semibold">${(setupDeployPrice / 100).toFixed(2)}</span>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Order ID</span>
-              <span className="font-mono text-xs text-foreground uppercase">{receipt.orderId.slice(0, 12)}...</span>
+            <div className="flex items-baseline justify-between gap-4 pt-1">
+              <dt className="font-medium text-foreground">Amount paid</dt>
+              <dd
+                className={`tabular text-2xl font-semibold tracking-tight ${
+                  totalPaid <= 0 ? "text-success" : "text-foreground"
+                }`}
+              >
+                {formatAmount(totalPaid)}
+              </dd>
             </div>
-            {receipt.paymentId && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Payment ID</span>
-                <span className="font-mono text-xs text-foreground">{receipt.paymentId}</span>
-              </div>
-            )}
-            <Separator className="my-2" />
-            <div className="flex justify-between items-baseline pt-2">
-              <span className="text-muted-foreground font-medium">Amount Paid</span>
-              <span className="text-2xl font-bold text-foreground">
-                ${(receipt.amount / 100).toFixed(2)}
-              </span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </dl>
+        </section>
 
-      {/* CTA Buttons */}
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-        <Button asChild size="lg" className="w-full sm:w-auto h-12 px-8">
-          <a href={`/api/download/${receipt.product.id}`}>
-            <Download className="w-4 h-4 mr-2" />
-            Download Files
-          </a>
-        </Button>
+        <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button asChild variant="outline" size="lg">
+            <Link href={`/dashboard/receipt/${lineItems[0].orderId}`}>
+              <FileText className="size-4" strokeWidth={1.75} aria-hidden="true" />
+              View receipt
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="lg">
+            <Link href="/dashboard">
+              Go to your library
+              <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            </Link>
+          </Button>
+        </div>
 
-        <Button asChild variant="outline" size="lg" className="w-full sm:w-auto h-12 px-8">
-          <Link href={`/dashboard/receipt/${receipt.orderId}`}>
-            <FileText className="w-4 h-4 mr-2" />
-            View Receipt
+        <p className="mt-10 text-sm text-muted-foreground">
+          <Link href="/" className="hover:text-foreground transition-colors">
+            Return to marketplace
           </Link>
-        </Button>
-        
-        <Button asChild variant="ghost" size="lg" className="w-full sm:w-auto h-12 px-8">
-          <Link href="/dashboard">
-            View Purchases
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Link>
-        </Button>
-      </div>
-
-      <div className="pt-8">
-        <Button asChild variant="link" size="sm" className="text-muted-foreground hover:text-foreground">
-          <Link href="/">
-            <Home className="w-4 h-4 mr-2" />
-            Return to Marketplace
-          </Link>
-        </Button>
+        </p>
       </div>
     </div>
   );

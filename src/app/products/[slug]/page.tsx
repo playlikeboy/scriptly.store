@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { cache } from "react";
 import { db } from "@/db";
 import { products, orders, users, affiliateProfiles } from "@/db/schema";
 import { eq, and, ne } from "drizzle-orm";
@@ -8,31 +9,9 @@ import { getOrCreateDbUser } from "@/lib/auth-utils";
 import ProductCheckout from "@/components/ProductCheckout";
 import Link from "next/link";
 import ProductAffiliateShare from "@/components/ProductAffiliateShare";
-import { getProductEffectivePrice, formatUSD } from "@/lib/price-utils";
-import {
-  ArrowLeft,
-  ExternalLink,
-  ShieldCheck,
-  Download,
-  Layers,
-  CheckCircle2,
-  ChevronRight,
-  Sparkles,
-  FileCode2,
-  Clock,
-  Store,
-  Star,
-  Zap,
-  HelpCircle,
-  Code2,
-  Heart,
-  Home,
-  Check,
-  FileText,
-  Lock,
-} from "lucide-react";
+import { getProductEffectivePrice, formatPrice, formatMoney, CATALOG_CURRENCY } from "@/lib/price-utils";
+import { Check, ChevronRight, ExternalLink, Heart, Lock } from "lucide-react";
 import { Metadata } from "next";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { marked } from "marked";
 import ShareButton from "@/components/ShareButton";
@@ -45,7 +24,6 @@ import ProductStickyBar from "@/components/ProductStickyBar";
 import ProductCard from "@/components/marketplace/ProductCard";
 import { getProductSeo } from "@/lib/seo-data";
 import { siteConfig } from "@/config/site";
-import { CyberBackground } from "@/components/ui/CyberBackground";
 
 interface PageProps {
   params: Promise<{
@@ -53,17 +31,44 @@ interface PageProps {
   }>;
 }
 
+// Deduplicate the product + session lookups shared by generateMetadata and the page render.
+const getProductBySlug = cache(async (slug: string) =>
+  db.query.products.findFirst({
+    where: eq(products.slug, slug),
+  })
+);
+const getCurrentUser = cache(getOrCreateDbUser);
+
+const humanizeCategory = (category: string) => category.replace(/-/g, " ");
+
+const INCLUDED = [
+  {
+    title: "Full source code",
+    body: "Clean, unminified Next.js & TypeScript repository with modular architecture and zero obfuscation.",
+  },
+  {
+    title: "Commercial license",
+    body: "Use for unlimited personal & client commercial projects without recurring royalty fees.",
+  },
+  {
+    title: "Instant digital delivery",
+    body: "Download link generated immediately upon checkout and stored in your customer dashboard forever.",
+  },
+  {
+    title: "Lifetime access & updates",
+    body: "Get free access to future version updates and bug fixes directly from your account library.",
+  },
+] as const;
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = await db.query.products.findFirst({
-    where: eq(products.slug, slug),
-  });
+  const product = await getProductBySlug(slug);
 
   if (!product) {
     return { title: "Product Not Found | ScriptlyStore" };
   }
 
-  const user = await getOrCreateDbUser();
+  const user = await getCurrentUser();
   const isUserAdmin = user?.role === "admin";
   const isUserCreator = user !== null && product.creatorId === user.id;
   const isAccessible = product.published && product.status === "approved";
@@ -73,7 +78,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   const promo = getProductEffectivePrice(product);
-  const priceText = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
+  const priceText = promo.isFree ? "FREE" : formatMoney(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceText);
 
   const ogImages: { url: string; width?: number; height?: number; alt?: string }[] = [];
@@ -94,7 +99,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     : [product.category, "developer tool", "source code", "boilerplate", "Next.js template", "React component"];
 
   return {
-    title: `${product.title} — Premium ${product.category.replace(/-/g, " ")} | ScriptlyStore`,
+    title: `${product.title} — Premium ${humanizeCategory(product.category)} | ScriptlyStore`,
     description: seo.description,
     keywords,
     alternates: {
@@ -132,13 +137,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function ProductDetailPage({ params }: PageProps) {
   const { slug } = await params;
-  const product = await db.query.products.findFirst({
-    where: eq(products.slug, slug),
-  });
+  const product = await getProductBySlug(slug);
 
   if (!product) notFound();
 
-  const user = await getOrCreateDbUser();
+  const user = await getCurrentUser();
   const isUserAdmin = user?.role === "admin";
   const isUserCreator = user !== null && product.creatorId === user.id;
   const isAccessible = product.published && product.status === "approved";
@@ -147,49 +150,41 @@ export default async function ProductDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  // Load affiliate profile of current user to see if they are approved
-  let affiliateProfile = null;
-  if (user) {
-    affiliateProfile = await db.query.affiliateProfiles.findFirst({
-      where: eq(affiliateProfiles.id, user.id),
-    });
-  }
-  const isApprovedAffiliate = affiliateProfile?.status === "approved";
+  // Independent lookups run in parallel instead of a serial waterfall.
+  const [affiliateProfile, creatorRecord, relatedProducts, purchase] = await Promise.all([
+    user
+      ? db.query.affiliateProfiles.findFirst({ where: eq(affiliateProfiles.id, user.id) })
+      : Promise.resolve(undefined),
+    product.creatorId
+      ? db.query.users.findFirst({ where: eq(users.id, product.creatorId) })
+      : Promise.resolve(undefined),
+    db.query.products.findMany({
+      where: and(
+        eq(products.category, product.category),
+        ne(products.id, product.id),
+        eq(products.published, true),
+        eq(products.status, "approved")
+      ),
+      limit: 3,
+    }),
+    user
+      ? db.query.orders.findFirst({
+          where: and(
+            eq(orders.userId, user.id),
+            eq(orders.productId, product.id),
+            eq(orders.status, "completed")
+          ),
+        })
+      : Promise.resolve(undefined),
+  ]);
 
-  // Load creator store name and info
-  let storeName: string | null = null;
-  let creatorRecord = null;
-  if (product.creatorId) {
-    creatorRecord = await db.query.users.findFirst({
-      where: eq(users.id, product.creatorId),
-    });
-    storeName = creatorRecord?.storeName || creatorRecord?.name || null;
-  }
+  const isApprovedAffiliate = affiliateProfile?.status === "approved";
+  const storeName: string | null = creatorRecord?.storeName || creatorRecord?.name || null;
+  const hasPurchased = Boolean(purchase);
 
   const promo = getProductEffectivePrice(product);
-
-  // Fetch related products in same category
-  const relatedProducts = await db.query.products.findMany({
-    where: and(
-      eq(products.category, product.category),
-      ne(products.id, product.id),
-      eq(products.published, true),
-      eq(products.status, "approved")
-    ),
-    limit: 3,
-  });
-
-  let hasPurchased = false;
-  if (user) {
-    const purchase = await db.query.orders.findFirst({
-      where: and(
-        eq(orders.userId, user.id),
-        eq(orders.productId, product.id),
-        eq(orders.status, "completed")
-      ),
-    });
-    if (purchase) hasPurchased = true;
-  }
+  const categoryLabel = humanizeCategory(product.category);
+  const categoryHref = `/explore/${encodeURIComponent(product.category.toLowerCase())}`;
 
   const tagsList = product.tags
     ? product.tags.split(",").map((t) => t.trim()).filter(Boolean)
@@ -205,15 +200,15 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
   const customRenderer = new marked.Renderer();
   customRenderer.link = function (token) {
-    return `<a href="${token.href}" title="${token.title || ""}" target="_blank" rel="noopener noreferrer" class="text-primary underline font-medium hover:opacity-80 transition-opacity">${token.text}</a>`;
+    return `<a href="${token.href}" title="${token.title || ""}" target="_blank" rel="noopener noreferrer" class="text-primary underline underline-offset-4 hover:no-underline">${token.text}</a>`;
   };
   const htmlDescription = await marked.parse(product.description || "", { renderer: customRenderer });
 
-  const priceFormatted = promo.isFree ? "FREE" : formatUSD(promo.effectivePrice);
+  const priceFormatted = promo.isFree ? "FREE" : formatMoney(promo.effectivePrice);
   const seo = getProductSeo(product.slug, product.title, product.shortDescription, product.category, priceFormatted);
 
   // Rich Schema.org JSON-LD structured data
-  const productSchema: Record<string, any> = {
+  const productSchema: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "Product",
     name: product.title,
@@ -229,7 +224,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
     offers: {
       "@type": "Offer",
       url: `${siteConfig.url}/products/${product.slug}`,
-      priceCurrency: "INR",
+      priceCurrency: CATALOG_CURRENCY,
       price: (promo.effectivePrice / 100).toString(),
       priceValidUntil: "2030-12-31",
       itemCondition: "https://schema.org/NewCondition",
@@ -253,23 +248,13 @@ export default async function ProductDetailPage({ params }: PageProps) {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
-      {
-        "@type": "ListItem",
-        position: 1,
-        name: "Home",
-        item: siteConfig.url,
-      },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: "Explore",
-        item: `${siteConfig.url}/explore`,
-      },
+      { "@type": "ListItem", position: 1, name: "Home", item: siteConfig.url },
+      { "@type": "ListItem", position: 2, name: "Explore", item: `${siteConfig.url}/explore` },
       {
         "@type": "ListItem",
         position: 3,
-        name: product.category.replace(/-/g, " "),
-        item: `${siteConfig.url}/explore/${encodeURIComponent(product.category.toLowerCase())}`,
+        name: categoryLabel,
+        item: `${siteConfig.url}${categoryHref}`,
       },
       {
         "@type": "ListItem",
@@ -289,7 +274,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
     offers: {
       "@type": "Offer",
       price: (promo.effectivePrice / 100).toString(),
-      priceCurrency: "INR",
+      priceCurrency: CATALOG_CURRENCY,
     },
   };
 
@@ -306,17 +291,20 @@ export default async function ProductDetailPage({ params }: PageProps) {
     })),
   };
 
-  return (
-    <div className="flex flex-col min-h-screen py-6 sm:py-10 bg-background text-foreground relative">
-      <CyberBackground />
+  const promoEndLabel =
+    promo.hasDiscount && promo.promoEnd
+      ? promo.promoEnd.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      : null;
 
+  return (
+    <div className="bg-background text-foreground pb-24 lg:pb-0">
       {/* Structured SEO Schemas */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(productSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbsSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
 
-      {/* Sticky Bottom Floating Bar */}
+      {/* Mobile buy bar: appears once the purchase panel scrolls away */}
       <ProductStickyBar
         title={product.title}
         thumbnail={product.thumbnail}
@@ -325,431 +313,303 @@ export default async function ProductDetailPage({ params }: PageProps) {
         demoUrl={product.demoUrl}
       />
 
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 space-y-8 relative z-10">
-        {/* Top Header & Breadcrumbs Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <nav aria-label="Breadcrumbs" className="flex items-center gap-1.5 text-muted-foreground flex-wrap">
-            <Link href="/" className="hover:text-foreground transition-colors flex items-center gap-1">
-              <Home className="w-3.5 h-3.5" />
-              <span>Home</span>
-            </Link>
-            <ChevronRight className="h-3 w-3 opacity-40" />
-            <Link href="/explore" className="hover:text-foreground transition-colors">
-              Explore
-            </Link>
-            <ChevronRight className="h-3 w-3 opacity-40" />
-            <Link
-              href={`/explore/${encodeURIComponent(product.category.toLowerCase())}`}
-              className="hover:text-foreground transition-colors capitalize font-medium text-foreground/80"
-            >
-              {product.category.replace(/-/g, " ")}
-            </Link>
-            <ChevronRight className="h-3 w-3 opacity-40" />
-            <span className="text-foreground font-semibold truncate max-w-[220px] sm:max-w-xs">
-              {product.title}
-            </span>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-10">
+        {/* Breadcrumbs + admin controls */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <nav aria-label="Breadcrumb" className="min-w-0">
+            <ol className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+              <li>
+                <Link href="/" className="rounded-sm hover:text-foreground transition-colors">
+                  Home
+                </Link>
+              </li>
+              <li aria-hidden="true">
+                <ChevronRight className="size-3 opacity-60" strokeWidth={1.75} />
+              </li>
+              <li>
+                <Link href="/explore" className="rounded-sm hover:text-foreground transition-colors">
+                  Explore
+                </Link>
+              </li>
+              <li aria-hidden="true">
+                <ChevronRight className="size-3 opacity-60" strokeWidth={1.75} />
+              </li>
+              <li>
+                <Link href={categoryHref} className="rounded-sm capitalize hover:text-foreground transition-colors">
+                  {categoryLabel}
+                </Link>
+              </li>
+              <li aria-hidden="true">
+                <ChevronRight className="size-3 opacity-60" strokeWidth={1.75} />
+              </li>
+              <li className="min-w-0">
+                <span aria-current="page" className="block max-w-[220px] truncate text-foreground sm:max-w-xs">
+                  {product.title}
+                </span>
+              </li>
+            </ol>
           </nav>
 
-          {isUserAdmin && (
-            <div className="self-start sm:self-auto">
-              <AdminToolbar productId={product.id} isPublished={product.published} />
-            </div>
-          )}
+          {isUserAdmin && <AdminToolbar productId={product.id} isPublished={product.published} />}
         </div>
 
-        {/* Product Page Header Banner */}
-        <div className="space-y-3 pt-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`/explore/${encodeURIComponent(product.category.toLowerCase())}`}
-              className="px-3 py-1 rounded-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-[11px] font-black uppercase tracking-wider transition-colors"
-            >
-              {product.category.replace(/-/g, " ")}
+        {/* Title block */}
+        <header className="mt-6 max-w-4xl space-y-3 md:mt-8">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            <Link href={categoryHref} className="capitalize hover:text-foreground transition-colors">
+              {categoryLabel}
             </Link>
-            <span className="px-2.5 py-1 rounded-full bg-muted/60 text-muted-foreground border border-border/40 text-[11px] font-mono font-semibold">
-              v{product.version || "1.0.0"}
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[11px] font-semibold flex items-center gap-1">
-              <Zap className="w-3 h-3" />
-              Instant ZIP Download
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20 text-[11px] font-semibold flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3" />
-              Commercial License Included
-            </span>
-          </div>
-
-          <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight text-foreground leading-[1.15]">
-            {product.title}
-          </h1>
-
-          <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-4xl font-medium">
-            {product.shortDescription}
+            <span aria-hidden="true">·</span>
+            <span className="font-mono text-xs">v{product.version || "1.0.0"}</span>
+            {storeName && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  by{" "}
+                  {product.creatorId ? (
+                    <Link href={`/stores/${product.creatorId}`} className="text-foreground hover:text-primary transition-colors">
+                      {storeName}
+                    </Link>
+                  ) : (
+                    <span className="text-foreground">{storeName}</span>
+                  )}
+                </span>
+              </>
+            )}
           </p>
-        </div>
+          <h1 className="font-display text-3xl leading-[1.1] text-foreground md:text-5xl">{product.title}</h1>
+          {product.shortDescription && (
+            <p className="max-w-[68ch] text-base leading-relaxed text-muted-foreground md:text-lg">
+              {product.shortDescription}
+            </p>
+          )}
+          <ProductRating productId={product.id} initialRating={product.rating || "5.0"} />
+        </header>
 
-        {/* 2-Column Responsive Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start">
-          {/* Main Visual & Documentation Column (7 cols) */}
-          <div className="lg:col-span-7 space-y-8">
-            {/* Visual Media Showcase */}
-            <div className="rounded-3xl border border-border/50 bg-card/30 overflow-hidden shadow-xl">
+        <div className="mt-8 grid grid-cols-1 items-start gap-10 lg:grid-cols-12 lg:gap-12">
+          {/* Media + documentation */}
+          <div className="min-w-0 space-y-12 lg:col-span-7">
+            <section aria-label="Product media" className="space-y-4">
               <ProductMediaSwitcher
                 videoUrl={product.videoUrl}
                 previewGif={product.previewGif}
                 thumbnail={product.thumbnail}
                 title={product.title}
               />
-            </div>
-
-            {/* Screenshots Gallery */}
-            {screenshotsList.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                    Interface Screenshots ({screenshotsList.length})
-                  </h3>
-                  <span className="text-[11px] text-muted-foreground font-medium">Click to enlarge</span>
-                </div>
+              {screenshotsList.length > 0 && (
                 <ProductScreenshots screenshots={screenshotsList} productTitle={product.title} />
-              </div>
-            )}
+              )}
+            </section>
 
-            {/* Value Highlights Grid: What You Receive */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold">
-                  <FileCode2 className="w-4 h-4" />
-                </div>
-                <h4 className="font-bold text-xs sm:text-sm text-foreground">Full Source Code</h4>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Clean, unminified Next.js &amp; TypeScript repository with modular architecture and zero obfuscation.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <h4 className="font-bold text-xs sm:text-sm text-foreground">Commercial License</h4>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Use for unlimited personal &amp; client commercial projects without recurring royalty fees.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold">
-                  <Zap className="w-4 h-4" />
-                </div>
-                <h4 className="font-bold text-xs sm:text-sm text-foreground">Instant Digital Delivery</h4>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Download link generated immediately upon checkout and stored in your customer dashboard forever.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl border border-border/40 bg-card/30 backdrop-blur-md space-y-1.5 shadow-2xs">
-                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-bold">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <h4 className="font-bold text-xs sm:text-sm text-foreground">Lifetime Access &amp; Updates</h4>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Get free access to future version updates and bug fixes directly from your account library.
-                </p>
-              </div>
-            </div>
-
-            {/* Product Overview & Markdown Documentation */}
-            <div className="p-6 sm:p-8 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md space-y-6 shadow-sm">
-              <div className="flex items-center justify-between pb-4 border-b border-border/30">
-                <h2 className="text-base sm:text-lg font-black text-foreground tracking-tight flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-primary" />
-                  <span>Overview &amp; Technical Specifications</span>
-                </h2>
-                <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider rounded-lg border-border/60">
-                  Documentation
-                </Badge>
-              </div>
-
+            <section aria-labelledby="overview-heading" className="space-y-4">
+              <h2 id="overview-heading" className="text-xl font-semibold tracking-tight text-foreground">
+                Overview
+              </h2>
               <div
                 dangerouslySetInnerHTML={{ __html: htmlDescription }}
-                className="markdown-content text-sm sm:text-base leading-relaxed text-muted-foreground space-y-4 prose prose-neutral dark:prose-invert max-w-none prose-headings:text-foreground prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary prose-a:underline prose-code:text-primary prose-code:bg-muted/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-strong:text-foreground"
+                className="markdown-content max-w-[68ch] text-[15px] [&>*:first-child]:mt-0"
               />
-            </div>
+            </section>
 
-            {/* Technologies & Frameworks */}
             {tagsList.length > 0 && (
-              <div className="p-6 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md space-y-4 shadow-sm">
-                <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-foreground">
-                  <Layers className="h-4 w-4 text-primary" />
-                  <span>Technologies &amp; Architecture</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
+              <section aria-labelledby="stack-heading" className="space-y-3">
+                <h2 id="stack-heading" className="text-xl font-semibold tracking-tight text-foreground">
+                  Built with
+                </h2>
+                <ul className="flex flex-wrap gap-2">
                   {tagsList.map((tag) => (
-                    <span
+                    <li
                       key={tag}
-                      className="rounded-xl px-3 py-1.5 text-xs font-mono font-semibold bg-muted/30 text-foreground border border-border/50 hover:border-primary/50 transition-colors"
+                      className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground"
                     >
                       {tag}
-                    </span>
+                    </li>
                   ))}
-                </div>
-              </div>
+                </ul>
+              </section>
             )}
 
-            {/* Product FAQs */}
             {seo.faqs.length > 0 && (
-              <div className="p-6 sm:p-8 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md space-y-6 shadow-sm">
-                <div className="flex items-center gap-2 text-base font-black text-foreground tracking-tight pb-3 border-b border-border/30">
-                  <HelpCircle className="w-5 h-5 text-primary" />
-                  <span>Frequently Asked Questions</span>
-                </div>
-                <div className="space-y-4">
-                  {seo.faqs.map((faq, idx) => (
-                    <div key={idx} className="p-4 rounded-2xl bg-muted/20 border border-border/30 space-y-2">
-                      <h4 className="font-bold text-sm text-foreground flex items-start gap-2">
-                        <span className="text-primary font-mono text-xs mt-0.5">Q{idx + 1}.</span>
+              <section aria-labelledby="faq-heading" className="space-y-3">
+                <h2 id="faq-heading" className="text-xl font-semibold tracking-tight text-foreground">
+                  Questions
+                </h2>
+                <div className="divide-y divide-border border-y border-border">
+                  {seo.faqs.map((faq) => (
+                    <details key={faq.question} className="group py-4">
+                      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 rounded-sm text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
                         <span>{faq.question}</span>
-                      </h4>
-                      <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed pl-6">
-                        {faq.answer}
-                      </p>
-                    </div>
+                        <ChevronRight
+                          aria-hidden="true"
+                          strokeWidth={1.75}
+                          className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90"
+                        />
+                      </summary>
+                      <p className="mt-2 max-w-[68ch] text-sm leading-relaxed text-muted-foreground">{faq.answer}</p>
+                    </details>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
+
+            <ProductAffiliateShare
+              productSlug={product.slug}
+              productTitle={product.title}
+              affiliateSlug={user?.affiliateSlug || user?.id || null}
+              isApproved={isApprovedAffiliate}
+              isLoggedIn={!!user}
+              commissionPercent={product.affiliateCommissionPercent ?? 30}
+            />
           </div>
 
-          {/* Sticky Checkout & Creator Sidebar (5 cols) */}
-          <div className="lg:col-span-5" id="checkout-panel">
-            <div className="sticky top-20 space-y-6">
-              {/* Product Pricing & Buy Panel */}
-              <div className="rounded-3xl border border-border/50 bg-card/60 dark:bg-card/30 backdrop-blur-xl p-6 sm:p-7 space-y-5 shadow-xl relative overflow-hidden">
-                {/* Accent top gradient */}
-                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary via-emerald-500 to-sky-500 opacity-90" />
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider">
-                      {product.category.replace(/-/g, " ")}
-                    </span>
-                    <span className="text-[11px] font-mono text-muted-foreground">
-                      v{product.version || "1.0.0"}
-                    </span>
+          {/* Purchase panel */}
+          <aside className="lg:col-span-5 lg:sticky lg:top-20" aria-label="Purchase">
+            <div
+              id="checkout-panel"
+              className="scroll-mt-24 rounded-2xl bg-card p-5 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.12)] sm:p-6"
+            >
+              {/* Price */}
+              <div className="space-y-1">
+                {promo.isFree ? (
+                  <p className="text-3xl font-semibold tracking-tight text-success">Free</p>
+                ) : promo.hasDiscount ? (
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <p className="tabular text-3xl font-semibold tracking-tight text-foreground">
+                      {formatMoney(promo.effectivePrice)}
+                    </p>
+                    <p className="tabular text-base text-muted-foreground line-through">
+                      <span className="sr-only">Was </span>
+                      {formatMoney(promo.price)}
+                    </p>
+                    <p className="text-sm font-medium text-primary">{promo.discountPercent}% off</p>
                   </div>
+                ) : (
+                  <p
+                    className={`tabular text-3xl font-semibold tracking-tight ${
+                      product.price <= 0 ? "text-success" : "text-foreground"
+                    }`}
+                  >
+                    {formatPrice(product.price)}
+                  </p>
+                )}
+                <p className="text-sm text-muted-foreground">
+                  {promo.isFree
+                    ? "Open source · Instant ZIP download"
+                    : "One-time purchase · Lifetime access · Free updates"}
+                </p>
+                {promoEndLabel && (
+                  <p className="text-xs text-muted-foreground">Offer ends {promoEndLabel}</p>
+                )}
+              </div>
 
-                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-foreground leading-snug">
-                    {product.title}
-                  </h2>
-
-                  {/* Rating summary */}
-                  <div className="pt-1 border-b border-border/30 pb-3">
-                    <ProductRating productId={product.id} initialRating={product.rating || "5.0"} />
-                  </div>
-                </div>
-
-                {/* Price Display in INR (Rule 2) */}
-                <div className="pt-1">
-                  {promo.isFree ? (
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-black text-emerald-500 font-mono">
-                        FREE
-                      </span>
-                      <span className="text-xs text-muted-foreground uppercase font-bold tracking-wider">
-                        Open Source
-                      </span>
-                    </div>
-                  ) : promo.hasDiscount ? (
-                    <div className="space-y-1">
-                      <div className="flex items-baseline gap-2.5">
-                        <span className="text-4xl font-black text-foreground font-mono">
-                          {formatUSD(promo.effectivePrice)}
-                        </span>
-                        <span className="text-base text-muted-foreground line-through font-mono">
-                          {formatUSD(promo.price)}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-500/10 text-rose-500 border border-rose-500/20">
-                          {promo.discountPercent}% OFF
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground font-mono">
-                        One-time purchase · Lifetime access · No subscription
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-0.5">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-4xl font-black text-foreground font-mono">
-                          {formatUSD(product.price)}
-                        </span>
-                        <span className="text-xs text-muted-foreground font-mono uppercase font-bold tracking-wider">
-                          USD
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground font-mono">
-                        One-time purchase · Lifetime access · Free updates
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Checkout Component */}
+              <div className="mt-5">
                 <ProductCheckout
                   product={product}
                   hasPurchased={hasPurchased}
                   userLoggedIn={!!user}
                   isFree={promo.isFree}
                 />
+              </div>
 
-                {/* Live Demo & Share Buttons */}
-                <div className="flex items-center gap-2 pt-1">
-                  {product.demoUrl && (
-                    <Button
-                      asChild
-                      variant="outline"
-                      size="sm"
-                      className="flex-1 h-11 text-xs font-bold rounded-2xl border-border/60 hover:bg-muted/40 cursor-pointer"
-                    >
-                      <a href={product.demoUrl} target="_blank" rel="noopener noreferrer">
-                        <span>Live Preview</span>
-                        <ExternalLink className="h-3.5 w-3.5 ml-1.5 opacity-70" />
-                      </a>
-                    </Button>
-                  )}
+              <div className="mt-3 flex items-center gap-2">
+                {product.demoUrl && (
+                  <Button asChild variant="outline" className="flex-1">
+                    <a href={product.demoUrl} target="_blank" rel="noopener noreferrer">
+                      Live preview
+                      <ExternalLink className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  </Button>
+                )}
+                <div className={product.demoUrl ? "flex-1" : "w-full"}>
                   <ShareButton productTitle={product.title} productSlug={product.slug} />
                 </div>
+              </div>
 
-                {/* Creator Attribution & Tip/Sponsor Link */}
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/30 flex items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-primary/20 to-sky-500/20 text-primary font-black text-xs flex items-center justify-center shrink-0">
-                      <Store className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Creator</p>
-                      <p className="font-bold text-foreground truncate">{storeName || "Verified Developer"}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <a
-                      href="https://razorpay.me/@iamsh"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-bold text-rose-500 hover:underline flex items-center gap-1"
+              {/* What's included */}
+              <div className="mt-6 border-t border-border pt-5">
+                <h2 className="text-sm font-semibold text-foreground">What you get</h2>
+                <ul className="mt-3 space-y-3">
+                  {INCLUDED.map((item) => (
+                    <li key={item.title} className="flex gap-3">
+                      <Check className="mt-0.5 size-4 shrink-0 text-success" strokeWidth={1.75} aria-hidden="true" />
+                      <div className="text-sm">
+                        <p className="font-medium text-foreground">{item.title}</p>
+                        <p className="text-muted-foreground leading-relaxed">{item.body}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Lock className="size-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                  Razorpay secure checkout — UPI, cards and netbanking.
+                </p>
+              </div>
+
+              {/* Creator */}
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-5 text-sm">
+                <p className="min-w-0 text-muted-foreground">
+                  Sold by{" "}
+                  {product.creatorId ? (
+                    <Link
+                      href={`/stores/${product.creatorId}`}
+                      className="font-medium text-foreground hover:text-primary transition-colors"
                     >
-                      <Heart className="w-3 h-3 fill-current" />
-                      <span>Tip &amp; Sponsor</span>
-                    </a>
-                    {product.creatorId && (
-                      <Link
-                        href={`/stores/${product.creatorId}`}
-                        className="text-[11px] font-bold text-primary hover:underline"
-                      >
-                        Store →
-                      </Link>
-                    )}
-                  </div>
-                </div>
-
-                {/* Affiliate Share Option */}
-                <ProductAffiliateShare
-                  productSlug={product.slug}
-                  productTitle={product.title}
-                  affiliateSlug={user?.affiliateSlug || user?.id || null}
-                  isApproved={isApprovedAffiliate}
-                  isLoggedIn={!!user}
-                  commissionPercent={product.affiliateCommissionPercent ?? 30}
-                />
-
-                {/* Buyer Protection & Guarantee Stack */}
-                <div className="pt-4 border-t border-border/40 space-y-2.5 text-xs">
-                  <p className="font-bold text-foreground flex items-center gap-1.5">
-                    <ShieldCheck className="h-4 w-4 text-emerald-500" />
-                    <span>Buyer Protection &amp; Guarantees</span>
-                  </p>
-
-                  <ul className="space-y-2.5 text-muted-foreground text-[11px]">
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-foreground font-semibold">Instant Source Archive:</strong> Full source
-                        repository ZIP delivered upon checkout.
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-foreground font-semibold">Commercial Rights:</strong> Full rights for
-                        unlimited personal and commercial client projects.
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-foreground font-semibold">Lifetime Updates:</strong> Download future
-                        versions directly from your customer library.
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-foreground font-semibold">Razorpay Secure Checkout:</strong> 256-bit
-                        encrypted UPI, Cards, and NetBanking payments.
-                      </span>
-                    </li>
-                  </ul>
-                </div>
+                      {storeName || "Verified Developer"}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-foreground">{storeName || "Verified Developer"}</span>
+                  )}
+                </p>
+                <a
+                  href="https://razorpay.me/@iamsh"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Heart className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                  Tip &amp; sponsor
+                </a>
               </div>
             </div>
-          </div>
+
+          </aside>
         </div>
 
-        {/* FULL-WIDTH SECTION 1: Builder Reviews & Feedback (Spans all columns, eliminating dead space!) */}
-        <div className="pt-8 border-t border-border/40">
-          <div className="p-6 sm:p-10 rounded-3xl border border-border/40 bg-card/25 backdrop-blur-md shadow-sm">
-            <ProductInteractionAndReviews
-              productId={product.id}
-              initialViews={product.views || 0}
-              initialDownloads={product.downloadsCount || 0}
-              initialSaves={product.saves || 0}
-              initialRating={product.rating || "5.0"}
-              initialRatingCount={product.ratingCount || 0}
-              userLoggedIn={!!user}
-              showStats={product.showStats}
-            />
-          </div>
-        </div>
+        {/* Reviews */}
+        <section aria-label="Reviews" className="mt-16 border-t border-border pt-10 md:mt-20">
+          <ProductInteractionAndReviews
+            productId={product.id}
+            productSlug={product.slug}
+            initialViews={product.views || 0}
+            initialDownloads={product.downloadsCount || 0}
+            initialSaves={product.saves || 0}
+            initialRating={product.rating || "5.0"}
+            initialRatingCount={product.ratingCount || 0}
+            userLoggedIn={!!user}
+            showStats={product.showStats}
+          />
+        </section>
 
-        {/* FULL-WIDTH SECTION 2: Related Products Carousel / Grid */}
+        {/* Related */}
         {relatedProducts.length > 0 && (
-          <div className="pt-8 border-t border-border/40 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div className="space-y-1">
-                <p className="text-xs font-bold uppercase tracking-wider text-primary">
-                  Explore Related Releases
-                </p>
-                <h3 className="text-2xl font-black tracking-tight text-foreground">
-                  More in {product.category.replace(/-/g, " ")}
-                </h3>
-              </div>
-              <Button asChild variant="outline" size="sm" className="rounded-xl font-bold self-start sm:self-auto text-xs">
-                <Link href={`/explore/${encodeURIComponent(product.category.toLowerCase())}`} className="flex items-center gap-1.5">
-                  <span>View All in Category</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
+          <section aria-labelledby="related-heading" className="mt-16 border-t border-border pt-10 md:mt-20">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <h2 id="related-heading" className="text-2xl font-semibold tracking-tight text-foreground">
+                More in <span className="capitalize">{categoryLabel}</span>
+              </h2>
+              <Button asChild variant="link" className="h-auto">
+                <Link href={categoryHref}>
+                  View all
+                  <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </Link>
               </Button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {relatedProducts.map((rel) => (
-                <ProductCard
-                  key={rel.id}
-                  product={rel}
-                  categoryName={rel.category}
-                />
+                <ProductCard key={rel.id} product={rel} categoryName={rel.category} />
               ))}
             </div>
-          </div>
+          </section>
         )}
       </div>
     </div>

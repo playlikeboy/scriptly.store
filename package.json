@@ -2,6 +2,14 @@
 	"name": "scriptlystore",
 	"version": "0.1.0",
 	"private": true,
+	"description": "ScriptlyStore — a curated marketplace for production-ready code: SaaS templates, scripts, UI kits and developer tools.",
+	"homepage": "https://scriptly.store",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/playlikeboy/scriptly.store.git"
+	},
+	"author": "Shaswat Raj (https://github.com/SH20RAJ)",
+	"keywords": ["marketplace", "developer-tools", "saas-templates", "nextjs", "cloudflare-workers", "razorpay", "drizzle", "neon"],
 	"scripts": {
 		"dev": "next dev",
 		"build": "next build",

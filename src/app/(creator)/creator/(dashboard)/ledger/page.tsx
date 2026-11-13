@@ -1,144 +1,173 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
-import { db } from "@/db";
-import { products, orders } from "@/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
-import { getOrCreateDbUser } from "@/lib/auth-utils";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Activity, AlertCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { getOrCreateDbUser } from "@/lib/auth-utils";
+import { formatMoney } from "@/lib/price-utils";
+import { Button } from "@/components/ui/button";
+import {
+  EmptyState,
+  PageHeader,
+  StatStrip,
+  StatusPill,
+  formatDate,
+  tableCellClass,
+  tableHeadClass,
+} from "@/components/creator/console-ui";
+import { getCreatorSales, getCreatorSalesSummary } from "../_lib/sales";
 
 export const metadata: Metadata = {
   title: "Sales Ledger | Creator Console",
   description: "Monitor purchase transactions and direct payouts settlement streams.",
 };
 
-const formatINR = (val: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(val);
+const PAGE_SIZE = 25;
 
-export default async function CreatorLedgerPage() {
+export default async function CreatorLedgerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await getOrCreateDbUser();
   if (!user) {
-    redirect("/handler/sign-in?redirectTo=/creator/dashboard");
+    redirect("/handler/sign-in?redirectTo=/creator/ledger");
   }
 
-  // Fetch creator's products
-  const creatorProducts = await db
-    .select({ id: products.id })
-    .from(products)
-    .where(eq(products.creatorId, user.id));
+  const { page: pageParam } = await searchParams;
+  const requested = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
 
-  const productIds = creatorProducts.map((p) => p.id);
+  const summary = await getCreatorSalesSummary(user.id);
+  const totalPages = Math.max(1, Math.ceil(summary.count / PAGE_SIZE));
+  const page = Math.min(requested, totalPages);
+  const sales =
+    summary.count > 0
+      ? await getCreatorSales(user.id, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
+      : [];
 
-  let salesHistory: {
-    orderId: string;
-    amount: number;
-    date: Date;
-    productTitle: string;
-    creatorShare: number;
-    referredById: string | null;
-  }[] = [];
-
-  if (productIds.length > 0) {
-    const rawSales = await db
-      .select({
-        orderId: orders.id,
-        amount: orders.amount,
-        date: orders.createdAt,
-        productTitle: products.title,
-        referredById: orders.referredById,
-        affiliateCommissionPercent: products.affiliateCommissionPercent,
-      })
-      .from(orders)
-      .innerJoin(products, eq(orders.productId, products.id))
-      .where(and(eq(orders.status, "completed"), inArray(orders.productId, productIds)))
-      .orderBy(desc(orders.createdAt));
-
-    salesHistory = rawSales.map((sale) => {
-      const commissionPercent = sale.referredById ? (sale.affiliateCommissionPercent ?? 30) : 0;
-      const creatorPercent = sale.referredById ? Math.max(0.95 - (commissionPercent / 100), 0) : 0.95;
-      const calculatedShare = Math.round(sale.amount * creatorPercent);
-      return {
-        orderId: sale.orderId,
-        amount: sale.amount,
-        date: sale.date,
-        productTitle: sale.productTitle,
-        creatorShare: calculatedShare,
-        referredById: sale.referredById,
-      };
-    });
-  }
+  const from = summary.count === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, summary.count);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-5">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-foreground">
-            Sales Ledger
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Historical payouts, order values, and automated sub-merchant splits.
-          </p>
-        </div>
-        <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider bg-muted/40 px-3 py-1 rounded-lg self-start sm:self-auto">
-          {salesHistory.length} Completed Orders
-        </span>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Sales ledger"
+        description="Every completed order for your products, with your share after platform and affiliate splits."
+      />
 
-      {/* Main Ledger Content */}
-      <div className="border border-border/50 bg-card/30 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm">
-        {salesHistory.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center space-y-2 p-6">
-            <Activity className="w-8 h-8 text-muted-foreground/40" />
-            <div className="space-y-1">
-              <p className="text-xs font-bold text-foreground">No transaction history yet</p>
-              <p className="text-[11px] text-muted-foreground max-w-xs">
-                Transaction records will appear here as soon as customers start purchasing your scripts.
-              </p>
-            </div>
-          </div>
+      <StatStrip
+        items={[
+          { label: "Completed orders", value: summary.count.toLocaleString("en-IN") },
+          { label: "Gross volume", value: formatMoney(summary.gross) },
+          { label: "Your share", value: formatMoney(summary.net) },
+          {
+            label: "Platform + affiliate",
+            value: formatMoney(Math.max(summary.gross - summary.net, 0)),
+          },
+        ]}
+      />
+
+      <section aria-labelledby="ledger-title" className="overflow-hidden rounded-2xl border border-border bg-card">
+        <h2 id="ledger-title" className="sr-only">
+          Transactions
+        </h2>
+        {sales.length === 0 ? (
+          <EmptyState
+            title="No transactions yet"
+            description="Orders appear here as soon as customers buy your products."
+            action={
+              <Button asChild variant="outline" size="sm">
+                <Link href="/creator/products">Manage products</Link>
+              </Button>
+            }
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-border/40 bg-muted/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                  <th className="py-3 px-5">Date</th>
-                  <th className="py-3 px-4">Script</th>
-                  <th className="py-3 px-4">Order ID</th>
-                  <th className="py-3 px-4">Total Paid</th>
-                  <th className="py-3 px-5 text-right">Your Share (95%)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/30 text-xs">
-                {salesHistory.map((sale) => (
-                  <tr key={sale.orderId} className="hover:bg-muted/15 transition-colors">
-                    <td className="py-3.5 px-5 text-muted-foreground whitespace-nowrap">
-                      {new Date(sale.date).toLocaleDateString()}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-foreground max-w-xs truncate">
-                      {sale.productTitle}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-[11px] text-muted-foreground">
-                      {sale.orderId.slice(0, 10)}...
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-foreground font-mono">
-                      {formatINR(sale.amount / 100)}
-                    </td>
-                    <td className="py-3.5 px-5 text-right font-black text-emerald-500 font-mono">
-                      +{formatINR(sale.creatorShare / 100)}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead className="border-b border-border bg-secondary/40">
+                  <tr>
+                    <th scope="col" className={tableHeadClass}>Date</th>
+                    <th scope="col" className={tableHeadClass}>Product</th>
+                    <th scope="col" className={tableHeadClass}>Order</th>
+                    <th scope="col" className={tableHeadClass}>Source</th>
+                    <th scope="col" className={`${tableHeadClass} text-right`}>Paid</th>
+                    <th scope="col" className={`${tableHeadClass} text-right`}>Your share</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {sales.map((sale) => (
+                    <tr key={sale.orderId} className="transition-colors hover:bg-secondary/40">
+                      <td className={`${tableCellClass} whitespace-nowrap text-muted-foreground`}>
+                        {formatDate(sale.date)}
+                      </td>
+                      <td className={`${tableCellClass} max-w-[18rem]`}>
+                        <Link
+                          href={`/products/${sale.productSlug}`}
+                          className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
+                        >
+                          {sale.productTitle}
+                        </Link>
+                      </td>
+                      <td className={tableCellClass}>
+                        <code className="font-mono text-xs text-muted-foreground" title={sale.orderId}>
+                          {sale.orderId.slice(0, 10)}
+                        </code>
+                      </td>
+                      <td className={tableCellClass}>
+                        {sale.referred ? <StatusPill>Affiliate</StatusPill> : <span className="text-muted-foreground">Direct</span>}
+                      </td>
+                      <td className={`${tableCellClass} tabular text-right whitespace-nowrap text-foreground`}>
+                        {formatMoney(sale.amount)}
+                      </td>
+                      <td className={`${tableCellClass} tabular text-right font-medium whitespace-nowrap text-success`}>
+                        +{formatMoney(sale.creatorShare)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <nav
+              aria-label="Ledger pages"
+              className="flex flex-col items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:px-5"
+            >
+              <p className="tabular">
+                {from}–{to} of {summary.count.toLocaleString("en-IN")}
+              </p>
+              <div className="flex items-center gap-2">
+                {page > 1 ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/creator/ledger?page=${page - 1}`} rel="prev">
+                      <ChevronLeft strokeWidth={1.75} /> Previous
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled>
+                    <ChevronLeft strokeWidth={1.75} /> Previous
+                  </Button>
+                )}
+                <span className="tabular px-1">
+                  {page} / {totalPages}
+                </span>
+                {page < totalPages ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/creator/ledger?page=${page + 1}`} rel="next">
+                      Next <ChevronRight strokeWidth={1.75} />
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled>
+                    Next <ChevronRight strokeWidth={1.75} />
+                  </Button>
+                )}
+              </div>
+            </nav>
+          </>
         )}
-      </div>
+      </section>
     </div>
   );
 }

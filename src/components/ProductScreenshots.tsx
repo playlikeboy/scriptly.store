@@ -1,8 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
-import { AspectRatio } from "@/components/ui/aspect-ratio";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 
 interface ProductScreenshotsProps {
@@ -12,29 +11,31 @@ interface ProductScreenshotsProps {
 
 export default function ProductScreenshots({ screenshots, productTitle }: ProductScreenshotsProps) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const count = screenshots.length;
 
-  const openModal = (index: number) => {
-    setActiveIndex(index);
-    document.body.style.overflow = "hidden";
-  };
-
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
     setActiveIndex(null);
-    document.body.style.overflow = "";
-  };
+    triggerRef.current?.focus();
+  }, []);
 
-  const nextImage = () => {
-    if (activeIndex === null) return;
-    setActiveIndex((activeIndex + 1) % screenshots.length);
-  };
+  const nextImage = useCallback(() => {
+    setActiveIndex((i) => (i === null ? i : (i + 1) % count));
+  }, [count]);
 
-  const prevImage = () => {
-    if (activeIndex === null) return;
-    setActiveIndex((activeIndex - 1 + screenshots.length) % screenshots.length);
-  };
+  const prevImage = useCallback(() => {
+    setActiveIndex((i) => (i === null ? i : (i - 1 + count) % count));
+  }, [count]);
+
+  const isOpen = activeIndex !== null;
 
   useEffect(() => {
-    if (activeIndex === null) return;
+    if (!isOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeModal();
@@ -43,98 +44,95 @@ export default function ProductScreenshots({ screenshots, productTitle }: Produc
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeIndex]);
-
-  useEffect(() => {
     return () => {
-      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
     };
-  }, []);
+  }, [isOpen, closeModal, nextImage, prevImage]);
 
-  if (!screenshots || screenshots.length === 0) return null;
+  if (count === 0) return null;
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+    <>
+      <ul className="grid grid-cols-3 gap-2 sm:gap-3" aria-label={`${productTitle} screenshots`}>
         {screenshots.map((src, i) => (
-          <AspectRatio
-            key={src + i}
-            ratio={16 / 9}
-            className="rounded-xl border border-border/40 bg-muted overflow-hidden group cursor-zoom-in shadow-sm"
-            onClick={() => openModal(i)}
-          >
-            <Image
-              src={src}
-              alt={productTitle + " screenshot " + (i + 1)}
-              fill
-              sizes="(max-width: 768px) 33vw, 220px"
-              loading="lazy"
-              className="object-cover transition-transform duration-500 group-hover:scale-110"
-            />
-          </AspectRatio>
+          <li key={src}>
+            <button
+              type="button"
+              onClick={(e) => {
+                triggerRef.current = e.currentTarget;
+                setActiveIndex(i);
+              }}
+              className="group relative block aspect-video w-full cursor-zoom-in overflow-hidden rounded-lg bg-secondary"
+              aria-label={`Enlarge screenshot ${i + 1} of ${count}`}
+            >
+              <Image
+                src={src}
+                alt=""
+                fill
+                sizes="(max-width: 640px) 33vw, (max-width: 1024px) 30vw, 220px"
+                loading="lazy"
+                className="object-cover transition-transform duration-200 ease-out group-hover:scale-[1.03]"
+              />
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
 
       {activeIndex !== null && (
         <div
-          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-center items-center select-none animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${productTitle} screenshot ${activeIndex + 1} of ${count}`}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/95 p-4 animate-in fade-in duration-200"
           onClick={closeModal}
         >
           <button
-            className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors cursor-pointer p-3 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
+            ref={closeRef}
+            type="button"
+            className="absolute right-4 top-4 flex size-10 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             onClick={(e) => {
               e.stopPropagation();
               closeModal();
             }}
             aria-label="Close preview"
           >
-            <X className="w-6 h-6" />
+            <X className="size-5" strokeWidth={1.75} />
           </button>
 
-          {screenshots.length > 1 && (
-            <button
-              className="absolute left-6 top-1/2 -translate-y-1/2 text-white/70 hover:text-white transition-colors cursor-pointer p-4 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                prevImage();
-              }}
-              aria-label="Previous screenshot"
-            >
-              <ChevronLeft className="w-8 h-8" />
-            </button>
-          )}
-
-          <div
-            className="relative max-w-[85vw] max-h-[80vh] flex items-center justify-center"
+          <img
+            src={screenshots[activeIndex]}
+            alt={`${productTitle} screenshot ${activeIndex + 1}`}
+            className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.25)] sm:max-w-[85vw]"
+            decoding="async"
             onClick={(e) => e.stopPropagation()}
-          >
-            <img
-              src={screenshots[activeIndex]}
-              alt={productTitle + " screenshot " + (activeIndex + 1)}
-              className="max-w-full max-h-[80vh] object-contain rounded-2xl border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200"
-              decoding="async"
-            />
-          </div>
+          />
 
-          {screenshots.length > 1 && (
-            <button
-              className="absolute right-6 top-1/2 -translate-y-1/2 text-white/70 hover:text-white transition-colors cursor-pointer p-4 rounded-full hover:bg-white/10 z-50 border border-white/10 bg-black/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                nextImage();
-              }}
-              aria-label="Next screenshot"
-            >
-              <ChevronRight className="w-8 h-8" />
-            </button>
+          {count > 1 && (
+            <div className="mt-4 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className="flex size-10 items-center justify-center rounded-[10px] border border-border bg-card text-foreground transition-colors hover:bg-secondary"
+                onClick={prevImage}
+                aria-label="Previous screenshot"
+              >
+                <ChevronLeft className="size-5" strokeWidth={1.75} />
+              </button>
+              <span className="tabular min-w-12 text-center text-sm text-muted-foreground" aria-live="polite">
+                {activeIndex + 1} / {count}
+              </span>
+              <button
+                type="button"
+                className="flex size-10 items-center justify-center rounded-[10px] border border-border bg-card text-foreground transition-colors hover:bg-secondary"
+                onClick={nextImage}
+                aria-label="Next screenshot"
+              >
+                <ChevronRight className="size-5" strokeWidth={1.75} />
+              </button>
+            </div>
           )}
-
-          <div className="absolute bottom-6 text-white/50 text-xs font-semibold tracking-widest uppercase">
-            {activeIndex + 1} / {screenshots.length}
-          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

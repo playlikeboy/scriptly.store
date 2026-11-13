@@ -2,11 +2,23 @@
 
 import { db } from "@/db";
 import { users, affiliateProfiles, affiliateCommissions, orders, products, affiliateReferrals, payouts } from "@/db/schema";
-import { eq, and, ne, desc, gt, or } from "drizzle-orm";
+import { eq, and, ne, desc, gt, or, count, sql } from "drizzle-orm";
 import { getOrCreateDbUser, isAdmin } from "@/lib/auth-utils";
 import { revalidatePath } from "next/cache";
-import crypto from "crypto";
 import { headers } from "next/headers";
+
+const MAX_CHANNELS_LENGTH = 1000;
+const MAX_REF_LENGTH = 128;
+
+/** Best client IP: Cloudflare's header first, then the first X-Forwarded-For hop. */
+function clientIp(headersList: Headers): string {
+  return (
+    headersList.get("cf-connecting-ip") ||
+    headersList.get("x-real-ip") ||
+    headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
 
 export async function registerAffiliateAction({
   slug,
@@ -20,53 +32,59 @@ export async function registerAffiliateAction({
     throw new Error("Unauthorized: Please sign in to register.");
   }
 
+  if (typeof slug !== "string" || typeof channels !== "string") {
+    throw new Error("Invalid affiliate registration.");
+  }
+  if (channels.length > MAX_CHANNELS_LENGTH) {
+    throw new Error(`Channels must be at most ${MAX_CHANNELS_LENGTH} characters.`);
+  }
+
   // Validate slug
   const cleanSlug = slug.trim().toLowerCase();
   if (!/^[a-z0-9_-]{3,20}$/.test(cleanSlug)) {
     throw new Error("Handle must be 3-20 characters, containing only letters, numbers, hyphens, or underscores.");
   }
 
-  // Check if slug is taken
-  const taken = await db.query.users.findFirst({
-    where: and(eq(users.affiliateSlug, cleanSlug), ne(users.id, user.id)),
-  });
+  // A handle must not collide with another user's handle or user id
+  // (referral codes resolve by either).
+  const [taken] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(or(eq(users.affiliateSlug, cleanSlug), eq(users.id, cleanSlug)), ne(users.id, user.id)))
+    .limit(1);
 
   if (taken) {
     throw new Error("This referral handle is already in use by another user.");
   }
 
-  // Update user's affiliate slug
-  await db
-    .update(users)
-    .set({
-      affiliateSlug: cleanSlug,
-      updatedAt: new Date(),
-    })
-    .where(eq(users.id, user.id));
-
-  // Create or update affiliate profile
-  const existingProfile = await db.query.affiliateProfiles.findFirst({
-    where: eq(affiliateProfiles.id, user.id),
-  });
-
-  if (existingProfile) {
+  // Update user's affiliate slug (unique constraint guards concurrent claims)
+  try {
     await db
-      .update(affiliateProfiles)
+      .update(users)
       .set({
-        channels,
-        status: "approved", // Auto-approved
+        affiliateSlug: cleanSlug,
         updatedAt: new Date(),
       })
-      .where(eq(affiliateProfiles.id, user.id));
-  } else {
-    await db.insert(affiliateProfiles).values({
+      .where(eq(users.id, user.id));
+  } catch {
+    throw new Error("This referral handle is already in use by another user.");
+  }
+
+  // Create or update affiliate profile in one upsert
+  const now = new Date();
+  await db
+    .insert(affiliateProfiles)
+    .values({
       id: user.id,
       channels,
       status: "approved", // Auto-approved
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: affiliateProfiles.id,
+      set: { channels, status: "approved", updatedAt: now },
     });
-  }
 
   revalidatePath("/affiliate");
   revalidatePath("/affiliate/dashboard");
@@ -83,6 +101,9 @@ export async function updateAffiliateStatusAction({
   const authorized = await isAdmin();
   if (!authorized) {
     throw new Error("Unauthorized: Admin access required.");
+  }
+  if (typeof userId !== "string" || !userId || (status !== "approved" && status !== "rejected")) {
+    throw new Error("Invalid affiliate status update.");
   }
 
   await db
@@ -103,46 +124,48 @@ export async function getAffiliateDashboardStatsAction() {
     throw new Error("Unauthorized");
   }
 
-  // Fetch referrals (clicks)
-  const clicks = await db.query.affiliateReferrals.findMany({
-    where: eq(affiliateReferrals.affiliateId, user.id),
-  });
+  // Independent queries run in parallel; counts and sums are aggregated in SQL.
+  const [[clickAgg], [conversionAgg], [commissionAgg], commissions, referredOrders] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(affiliateReferrals)
+      .where(eq(affiliateReferrals.affiliateId, user.id)),
+    db
+      .select({ n: count() })
+      .from(orders)
+      .where(and(eq(orders.referredById, user.id), eq(orders.status, "completed"))),
+    db
+      .select({
+        totalEarned: sql<number>`coalesce(sum(${affiliateCommissions.amount}) filter (where ${affiliateCommissions.status} in ('paid', 'approved', 'pending')), 0)`.mapWith(Number),
+        unpaidBalance: sql<number>`coalesce(sum(${affiliateCommissions.amount}) filter (where ${affiliateCommissions.status} = 'pending'), 0)`.mapWith(Number),
+        paidBalance: sql<number>`coalesce(sum(${affiliateCommissions.amount}) filter (where ${affiliateCommissions.status} = 'paid'), 0)`.mapWith(Number),
+      })
+      .from(affiliateCommissions)
+      .where(eq(affiliateCommissions.affiliateId, user.id)),
+    db.query.affiliateCommissions.findMany({
+      where: eq(affiliateCommissions.affiliateId, user.id),
+      orderBy: desc(affiliateCommissions.createdAt),
+    }),
+    db
+      .select({
+        id: orders.id,
+        amount: orders.amount,
+        status: orders.status,
+        createdAt: orders.createdAt,
+        productTitle: products.title,
+      })
+      .from(orders)
+      .innerJoin(products, eq(orders.productId, products.id))
+      .where(eq(orders.referredById, user.id))
+      .orderBy(desc(orders.createdAt)),
+  ]);
 
-  // Fetch commissions
-  const commissions = await db.query.affiliateCommissions.findMany({
-    where: eq(affiliateCommissions.affiliateId, user.id),
-    orderBy: desc(affiliateCommissions.createdAt),
-  });
-
-  // Fetch orders referred
-  const referredOrders = await db
-    .select({
-      id: orders.id,
-      amount: orders.amount,
-      status: orders.status,
-      createdAt: orders.createdAt,
-      productTitle: products.title,
-    })
-    .from(orders)
-    .innerJoin(products, eq(orders.productId, products.id))
-    .where(eq(orders.referredById, user.id))
-    .orderBy(desc(orders.createdAt));
-
-  const totalClicks = clicks.length;
-  const totalConversions = referredOrders.filter(o => o.status === "completed").length;
+  const totalClicks = clickAgg?.n ?? 0;
+  const totalConversions = conversionAgg?.n ?? 0;
   const conversionRate = totalClicks > 0 ? (totalConversions / totalClicks) * 100 : 0;
-
-  const totalEarned = commissions
-    .filter(c => c.status === "paid" || c.status === "approved" || c.status === "pending")
-    .reduce((sum, c) => sum + c.amount, 0);
-
-  const unpaidBalance = commissions
-    .filter(c => c.status === "pending")
-    .reduce((sum, c) => sum + c.amount, 0);
-
-  const paidBalance = commissions
-    .filter(c => c.status === "paid")
-    .reduce((sum, c) => sum + c.amount, 0);
+  const totalEarned = commissionAgg?.totalEarned ?? 0;
+  const unpaidBalance = commissionAgg?.unpaidBalance ?? 0;
+  const paidBalance = commissionAgg?.paidBalance ?? 0;
 
   return {
     totalClicks,
@@ -166,29 +189,42 @@ export async function recordReferralClickAction({
   referrerUrl?: string;
 }) {
   try {
-    const referrer = await db.query.users.findFirst({
-      where: or(eq(users.id, ref), eq(users.affiliateSlug, ref)),
-    });
+    if (typeof ref !== "string" || !ref.trim() || ref.length > MAX_REF_LENGTH) {
+      return { success: false };
+    }
+    const cleanRef = ref.trim();
+
+    const [headersList, [referrer]] = await Promise.all([
+      headers(),
+      db
+        .select({ id: users.id })
+        .from(users)
+        .where(or(eq(users.id, cleanRef), eq(users.affiliateSlug, cleanRef.toLowerCase())))
+        .limit(1),
+    ]);
 
     if (!referrer) return { success: false };
 
-    // Get IP address and User Agent for simple deduplication
-    const headersList = await headers();
-    const ip = headersList.get("x-forwarded-for") || "unknown";
-    const userAgent = headersList.get("user-agent") || "unknown";
+    // IP + User Agent for simple deduplication
+    const ip = clientIp(headersList);
+    const userAgent = (headersList.get("user-agent") || "unknown").slice(0, 512);
 
-    // Hash the IP to respect privacy
-    const ipHash = crypto.createHash("sha256").update(ip).digest("hex");
+    // Hash the IP to respect privacy (plain SHA-256 keeps existing hashes comparable)
+    const ipHash = await sha256Hex(ip);
 
     // Check if this IP clicked this affiliate link in the last 24 hours to prevent spam
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const existingClick = await db.query.affiliateReferrals.findFirst({
-      where: and(
-        eq(affiliateReferrals.affiliateId, referrer.id),
-        eq(affiliateReferrals.ipHash, ipHash),
-        gt(affiliateReferrals.createdAt, oneDayAgo)
-      ),
-    });
+    const [existingClick] = await db
+      .select({ id: affiliateReferrals.id })
+      .from(affiliateReferrals)
+      .where(
+        and(
+          eq(affiliateReferrals.affiliateId, referrer.id),
+          eq(affiliateReferrals.ipHash, ipHash),
+          gt(affiliateReferrals.createdAt, oneDayAgo)
+        )
+      )
+      .limit(1);
 
     if (existingClick) {
       return { success: true, message: "Duplicate click ignored" };
@@ -197,10 +233,10 @@ export async function recordReferralClickAction({
     await db.insert(affiliateReferrals).values({
       id: crypto.randomUUID(),
       affiliateId: referrer.id,
-      productId: productId || null,
+      productId: typeof productId === "string" && productId.length <= MAX_REF_LENGTH ? productId : null,
       ipHash,
       userAgent,
-      referrerUrl: referrerUrl || null,
+      referrerUrl: typeof referrerUrl === "string" ? referrerUrl.slice(0, 2048) : null,
       createdAt: new Date(),
     });
 
@@ -217,26 +253,32 @@ export async function payoutAffiliateCommissionAction(commissionId: string) {
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const commission = await db.query.affiliateCommissions.findFirst({
-    where: eq(affiliateCommissions.id, commissionId),
-  });
-
-  if (!commission) {
+  if (typeof commissionId !== "string" || !commissionId) {
     throw new Error("Commission record not found.");
   }
 
-  if (commission.status === "paid") {
-    throw new Error("Commission is already paid.");
-  }
-
-  // Update commission status to paid
-  await db
+  // Atomic pending -> paid transition: concurrent clicks cannot log two payouts.
+  const [commission] = await db
     .update(affiliateCommissions)
     .set({
       status: "paid",
       updatedAt: new Date(),
     })
-    .where(eq(affiliateCommissions.id, commissionId));
+    .where(and(eq(affiliateCommissions.id, commissionId), ne(affiliateCommissions.status, "paid")))
+    .returning({
+      affiliateId: affiliateCommissions.affiliateId,
+      amount: affiliateCommissions.amount,
+      orderId: affiliateCommissions.orderId,
+    });
+
+  if (!commission) {
+    const [existing] = await db
+      .select({ id: affiliateCommissions.id })
+      .from(affiliateCommissions)
+      .where(eq(affiliateCommissions.id, commissionId))
+      .limit(1);
+    throw new Error(existing ? "Commission is already paid." : "Commission record not found.");
+  }
 
   // Log payout
   await db.insert(payouts).values({
@@ -254,20 +296,28 @@ export async function payoutAffiliateCommissionAction(commissionId: string) {
 }
 
 export async function validateReferralCodeAction(code: string) {
-  if (!code) {
+  if (!code || typeof code !== "string" || !code.trim()) {
     return { success: false, message: "Please enter a code." };
   }
+  if (code.length > MAX_REF_LENGTH) {
+    return { success: false, message: "Referral code not found." };
+  }
   const cleanCode = code.trim().toLowerCase();
-  const referrer = await db.query.users.findFirst({
-    where: or(eq(users.id, cleanCode), eq(users.affiliateSlug, cleanCode)),
-  });
+  const [referrer] = await db
+    .select({
+      id: users.id,
+      affiliateSlug: users.affiliateSlug,
+      storeName: users.storeName,
+      profileStatus: affiliateProfiles.status,
+    })
+    .from(users)
+    .leftJoin(affiliateProfiles, eq(affiliateProfiles.id, users.id))
+    .where(or(eq(users.id, cleanCode), eq(users.affiliateSlug, cleanCode)))
+    .limit(1);
   if (!referrer) {
     return { success: false, message: "Referral code not found." };
   }
-  const affiliateProfile = await db.query.affiliateProfiles.findFirst({
-    where: eq(affiliateProfiles.id, referrer.id),
-  });
-  if (!affiliateProfile || affiliateProfile.status !== "approved") {
+  if (referrer.profileStatus !== "approved") {
     return { success: false, message: "Affiliate profile is inactive." };
   }
   return { 
@@ -276,4 +326,9 @@ export async function validateReferralCodeAction(code: string) {
     referrerSlug: referrer.affiliateSlug || referrer.id,
     storeName: referrer.storeName || "Partner" 
   };
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }

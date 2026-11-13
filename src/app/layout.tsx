@@ -1,5 +1,5 @@
 import { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Geist, Geist_Mono, Newsreader } from "next/font/google";
 import { HexclaveProvider, HexclaveTheme } from "@hexclave/next";
 import Script from "next/script";
 import "@/app/globals.css";
@@ -11,10 +11,23 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import ReferralTracker from "@/components/ReferralTracker";
 import { siteConfig } from "@/config/site";
 
-const inter = Inter({
+const geist = Geist({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-geist",
   display: "swap",
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
+  display: "swap",
+});
+
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+  display: "swap",
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {
@@ -93,12 +106,11 @@ export const metadata: Metadata = {
 
 export const viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
-    { media: "(prefers-color-scheme: dark)", color: "#090D12" },
+    { media: "(prefers-color-scheme: light)", color: "#F7F6F2" },
+    { media: "(prefers-color-scheme: dark)", color: "#12110F" },
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -107,7 +119,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={inter.variable}>
+    <html lang="en" suppressHydrationWarning className={`${geist.variable} ${geistMono.variable} ${newsreader.variable}`}>
       <head>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <script
@@ -128,7 +140,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased bg-background text-foreground min-h-screen flex flex-col font-sans selection:bg-primary/20 selection:text-primary">
+      <body className="antialiased bg-background text-foreground min-h-screen flex flex-col font-sans ">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <HexclaveProvider app={stack}>
             <HexclaveTheme>

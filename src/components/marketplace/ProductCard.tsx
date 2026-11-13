@@ -2,33 +2,61 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { Check, Plus, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, Star, Check } from "lucide-react";
 import { useCart } from "@/components/CartContext";
-import { getProductEffectivePrice } from "@/lib/price-utils";
+import { formatMoney, getProductEffectivePrice } from "@/lib/price-utils";
+
+/**
+ * Structural shape the card needs. Matches `products.$inferSelect` and any
+ * subset of it passed by home / product pages, so callers stay untouched.
+ */
+export interface ProductCardProduct {
+  id: string;
+  title: string;
+  slug: string;
+  price: number; // paise
+  category: string;
+  shortDescription?: string | null;
+  thumbnail?: string | null;
+  previewGif?: string | null;
+  rating?: string | number | null;
+  ratingCount?: number | null;
+  isFree?: boolean | null;
+  discountPercent?: number | null;
+  promoStart?: Date | string | null;
+  promoEnd?: Date | string | null;
+}
 
 export interface ProductCardProps {
-  product?: any;
-  prod?: any;
+  product?: ProductCardProduct;
+  /** Legacy alias of `product`. */
+  prod?: ProductCardProduct;
   categoryName?: string;
 }
 
-export default function ProductCard(props: ProductCardProps) {
-  const product = props.product || props.prod;
-  const categoryName = props.categoryName;
-  const [isHovered, setIsHovered] = useState(false);
+export default function ProductCard({ product: productProp, prod, categoryName }: ProductCardProps) {
+  const product = productProp ?? prod;
+  const [showPreview, setShowPreview] = useState(false);
   const { addToCart, isInCart } = useCart();
+
+  if (!product) return null;
+
   const inCart = isInCart(product.id);
-  const promo = getProductEffectivePrice(product);
+  const promo = getProductEffectivePrice({
+    price: product.price,
+    isFree: product.isFree ?? false,
+    discountPercent: product.discountPercent ?? 0,
+    promoStart: product.promoStart ?? null,
+    promoEnd: product.promoEnd ?? null,
+  });
+  const isFree = promo.isFree || promo.effectivePrice <= 0;
+  const category = categoryName || product.category;
+  const ratingCount = product.ratingCount ?? 0;
+  const ratingValue = ratingCount > 0 ? Number(product.rating ?? 5) : null;
+  const hasGif = Boolean(product.previewGif);
 
-  const tagsList: string[] = typeof product?.tags === "string"
-    ? product.tags.split(",").map((t: string) => t.trim()).filter(Boolean).slice(0, 3)
-    : [];
-
-  const handleAddToCart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleAddToCart = () => {
     addToCart({
       id: product.id,
       title: product.title,
@@ -40,136 +68,110 @@ export default function ProductCard(props: ProductCardProps) {
     });
   };
 
-  const hasGenuineRating = (product.ratingCount ?? 0) > 0;
-  const displayRating = hasGenuineRating ? (product.rating || "5.0") : null;
-
   return (
-    <div
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border/50 bg-card/50 hover:bg-card/90 hover:border-border transition-all duration-300 hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5"
+    <article
+      className="group relative flex w-full min-w-0 flex-col gap-3"
+      onMouseEnter={hasGif ? () => setShowPreview(true) : undefined}
+      onMouseLeave={hasGif ? () => setShowPreview(false) : undefined}
     >
-      <Link href={`/products/${product.slug}`} className="block flex-1">
-        {/* Visual Preview Container */}
-        <div className="relative aspect-[16/10] w-full overflow-hidden bg-secondary/30">
-          {product.thumbnail ? (
-            <img
-              src={product.thumbnail}
-              alt={product.title}
-              loading="lazy"
-              decoding="async"
-              className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-105 ${
-                isHovered && product.previewGif ? "opacity-0" : "opacity-100"
-              }`}
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs font-mono text-muted-foreground">
-              {categoryName || product.category}
-            </div>
-          )}
-
-          {/* Hover Preview GIF if available */}
-          {product.previewGif && isHovered && (
-            <img
-              src={product.previewGif}
-              alt={`${product.title} animated preview`}
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          )}
-
-          {/* Minimal Badges */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5">
-            <span className="rounded-full bg-background/90 backdrop-blur-md px-2.5 py-0.5 text-[10px] font-semibold text-foreground border border-border/60 shadow-xs">
-              {categoryName || product.category}
-            </span>
-          </div>
-
-          {promo.isFree && (
-            <div className="absolute top-3 right-3">
-              <span className="rounded-full bg-emerald-500 text-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider shadow-xs">
-                Free
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Content Body */}
-        <div className="flex flex-1 flex-col p-4 sm:p-5">
-          <div className="space-y-1.5">
-            <h3 className="font-semibold text-sm text-foreground tracking-tight line-clamp-1 group-hover:text-primary transition-colors">
+      <div className="relative aspect-[16/10] w-full overflow-hidden rounded-xl border border-border bg-secondary">
+        {product.thumbnail ? (
+          <img
+            src={product.thumbnail}
+            alt=""
+            width={640}
+            height={400}
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover transition-transform duration-200 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+          />
+        ) : (
+          <div className="flex h-full w-full items-end p-4">
+            <span className="font-display text-2xl leading-tight text-muted-foreground line-clamp-2">
               {product.title}
-            </h3>
-            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-              {product.shortDescription}
-            </p>
-          </div>
-
-          {/* Tech Stack Pills */}
-          {tagsList.length > 0 && (
-            <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
-              {tagsList.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-full px-2 py-0.5 text-[10px] font-mono text-muted-foreground bg-secondary/70 border border-border/40"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </Link>
-
-      {/* Footer / Pricing & Actions */}
-      <div className="flex items-center justify-between border-t border-border/40 px-4 sm:px-5 py-3 bg-secondary/15">
-        <div className="flex items-center gap-2">
-          {promo.isFree ? (
-            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-              $0.00
             </span>
+          </div>
+        )}
+
+        {hasGif && showPreview && (
+          <img
+            src={product.previewGif as string}
+            alt=""
+            width={640}
+            height={400}
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover motion-reduce:hidden"
+          />
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="truncate text-xs text-muted-foreground">{category}</p>
+        <h3 className="text-[15px] font-medium leading-snug text-foreground">
+          <Link
+            href={`/products/${product.slug}`}
+            className="line-clamp-1 outline-none transition-colors duration-150 group-hover:text-primary after:absolute after:inset-0 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-offset-4 focus-visible:after:ring-offset-background"
+          >
+            {product.title}
+          </Link>
+        </h3>
+        {product.shortDescription && (
+          <p className="line-clamp-1 text-sm text-muted-foreground">{product.shortDescription}</p>
+        )}
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 tabular-nums">
+          {isFree ? (
+            <span className="text-sm font-semibold text-success">Free</span>
           ) : (
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-sm font-bold text-foreground font-mono">
-                ${(promo.effectivePrice / 100).toFixed(2)}
+            <>
+              <span className="text-sm font-semibold text-foreground">
+                {formatMoney(promo.effectivePrice)}
               </span>
               {promo.hasDiscount && (
-                <span className="text-xs text-muted-foreground line-through font-mono">
-                  ${(product.price / 100).toFixed(2)}
+                <span className="text-xs text-muted-foreground line-through">
+                  <span className="sr-only">Was </span>
+                  {formatMoney(product.price)}
                 </span>
               )}
-            </div>
+            </>
           )}
 
-          {displayRating && (
-            <div className="flex items-center gap-1 text-[11px] text-muted-foreground border-l border-border/50 pl-2">
-              <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-              <span className="font-medium">{displayRating}</span>
-              <span className="text-[10px]">({product.ratingCount})</span>
-            </div>
+          {ratingValue !== null && Number.isFinite(ratingValue) && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Star className="size-3.5 fill-amber-500 text-amber-500" strokeWidth={1.75} aria-hidden="true" />
+              <span className="sr-only">Rated </span>
+              {ratingValue.toFixed(1)}
+              <span>({ratingCount})</span>
+            </span>
           )}
         </div>
 
-        <Button
-          type="button"
-          size="xs"
-          variant={inCart ? "secondary" : "default"}
-          onClick={handleAddToCart}
-          className="h-7 px-3 text-[11px] font-bold rounded-lg"
-          aria-label={inCart ? "In Cart" : "Add to Cart"}
-        >
-          {inCart ? (
-            <>
-              <Check className="h-3 w-3 mr-1 text-primary" />
-              <span>Added</span>
-            </>
-          ) : (
-            <>
-              <ShoppingCart className="h-3 w-3 mr-1" />
-              <span>Add</span>
-            </>
-          )}
-        </Button>
+        {inCart ? (
+          <Button
+            asChild
+            variant="secondary"
+            size="icon-sm"
+            className="relative z-10"
+          >
+            <Link href="/cart" aria-label={`${product.title} is in your cart. View cart`}>
+              <Check className="size-4 text-success" strokeWidth={1.75} aria-hidden="true" />
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            onClick={handleAddToCart}
+            className="relative z-10"
+            aria-label={`Add ${product.title} to cart`}
+          >
+            <Plus className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          </Button>
+        )}
       </div>
-    </div>
+    </article>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useUser, UserButton } from "@hexclave/next";
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useUser, UserButton } from "@hexclave/next";
+import { ChevronDown, LayoutDashboard, Shield, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,75 +11,106 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, LayoutDashboard, Shield, Store } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-export default function AuthButtons() {
+interface AuthButtonsProps {
+  /** "inline" for the header bar, "stacked" for the mobile menu. */
+  layout?: "inline" | "stacked";
+}
+
+const MENU_LINKS = [
+  { href: "/dashboard", label: "Purchases & downloads", icon: LayoutDashboard },
+  { href: "/creator/dashboard", label: "Creator console", icon: Store },
+] as const;
+
+export default function AuthButtons({ layout = "inline" }: AuthButtonsProps) {
   const user = useUser();
+  const userId = user?.id ?? null;
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      fetch("/api/auth/role")
-        .then((res) => res.json())
-        .then((data: any) => {
-          setIsAdmin(data.role === "admin");
-        })
-        .catch(() => setIsAdmin(false));
-    } else {
-      setIsAdmin(false);
-    }
-  }, [user]);
+    if (!userId) return;
+    const controller = new AbortController();
+    fetch("/api/auth/role", { signal: controller.signal })
+      .then((res): Promise<{ role?: string }> => (res.ok ? res.json() : Promise.resolve({ role: "user" })))
+      .then((data: { role?: string }) => setIsAdmin(data.role === "admin"))
+      .catch(() => {
+        if (!controller.signal.aborted) setIsAdmin(false);
+      });
+    return () => controller.abort();
+  }, [userId]);
+
+  const stacked = layout === "stacked";
 
   if (!user) {
     return (
-      <div className="flex items-center space-x-2">
-        <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex px-3">
-          <Link href="/handler/sign-in">Sign In</Link>
+      <div className={cn("flex items-center gap-2", stacked && "flex-col items-stretch")}>
+        <Button asChild variant={stacked ? "outline" : "ghost"} size={stacked ? "default" : "sm"}>
+          <Link href="/handler/sign-in">Sign in</Link>
         </Button>
-        <Button asChild size="sm" className="px-4 font-semibold tracking-tight">
-          <Link href="/handler/sign-up">Sign Up</Link>
+        <Button asChild size={stacked ? "default" : "sm"}>
+          <Link href="/handler/sign-up">Create account</Link>
         </Button>
       </div>
     );
   }
 
+  if (stacked) {
+    const links = isAdmin
+      ? [...MENU_LINKS, { href: "/admin", label: "Admin", icon: Shield }]
+      : MENU_LINKS;
+    return (
+      <div className="flex flex-col gap-3">
+        <ul className="flex flex-col">
+          {links.map(({ href, label, icon: Icon }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                className="flex items-center gap-2.5 rounded-lg px-1 py-2 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Icon className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                {label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <UserButton />
+          <span className="truncate">{user.displayName || user.primaryEmail || "Account"}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center space-x-3">
+    <div className="flex items-center gap-2">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="h-9 px-4 rounded-xl font-black uppercase tracking-wider text-[10px] flex items-center gap-1.5 bg-muted/30 border-white/5 hover:bg-muted text-foreground cursor-pointer transition-all duration-200">
-            Console
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          <Button variant="ghost" size="sm" className="gap-1 text-foreground">
+            Account
+            <ChevronDown className="size-3.5 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48 p-1.5 rounded-2xl border border-border/40 bg-background/95 backdrop-blur-2xl shadow-xl z-[100] space-y-0.5">
-          <DropdownMenuItem asChild className="rounded-xl px-3 py-2 text-xs font-bold hover:bg-muted hover:text-foreground text-foreground cursor-pointer flex items-center gap-2">
-            <Link href="/dashboard">
-              <LayoutDashboard className="w-4 h-4 text-blue-400" />
-              Customer Area
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild className="rounded-xl px-3 py-2 text-xs font-bold hover:bg-muted hover:text-foreground text-foreground cursor-pointer flex items-center gap-2">
-            <Link href="/creator/dashboard">
-              <Store className="w-4 h-4 text-purple-400" />
-              Creator Console
-            </Link>
-          </DropdownMenuItem>
+        <DropdownMenuContent align="end" className="w-56 rounded-xl p-1">
+          {MENU_LINKS.map(({ href, label, icon: Icon }) => (
+            <DropdownMenuItem key={href} asChild className="cursor-pointer gap-2.5 rounded-lg px-2.5 py-2 text-sm">
+              <Link href={href}>
+                <Icon className="size-4 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+                {label}
+              </Link>
+            </DropdownMenuItem>
+          ))}
           {isAdmin && (
-            <DropdownMenuItem asChild className="rounded-xl px-3 py-2 text-xs font-bold hover:bg-muted hover:text-foreground text-foreground cursor-pointer flex items-center gap-2">
+            <DropdownMenuItem asChild className="cursor-pointer gap-2.5 rounded-lg px-2.5 py-2 text-sm">
               <Link href="/admin">
-                <Shield className="w-4 h-4 text-rose-400" />
-                Admin Console
+                <Shield className="size-4 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+                Admin
               </Link>
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <div className="flex items-center border-l border-border/40 pl-3 h-5">
-        <UserButton />
-      </div>
+      <UserButton />
     </div>
   );
 }
-

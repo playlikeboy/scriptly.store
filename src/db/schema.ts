@@ -49,7 +49,7 @@ export const products = pgTable("products", {
   demoUrl: text("demo_url"),
   fileUrl: text("file_url"), // URL to product file
   redirectDownload: boolean("redirect_download").default(true).notNull(),
-  price: integer("price").notNull(), // Price in paise (INR)
+  price: integer("price").notNull(), // Price in USD cents (catalog currency)
   version: text("version").default("1.0.0").notNull(),
   featured: boolean("featured").default(false).notNull(),
   published: boolean("published").default(true).notNull(),
@@ -89,7 +89,7 @@ export const orders = pgTable("orders", {
   productId: text("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
   razorpayOrderId: text("razorpay_order_id").notNull(),
   razorpayPaymentId: text("razorpay_payment_id"),
-  amount: integer("amount").notNull(), // Amount in paise
+  amount: integer("amount").notNull(), // Amount in USD cents (catalog currency)
   status: text("status").default("pending").notNull(), // 'pending', 'completed', 'failed'
   couponCode: text("coupon_code"),
   discountApplied: integer("discount_applied").default(0).notNull(),

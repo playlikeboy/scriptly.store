@@ -1,12 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { coupons } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
-import { redirect } from "next/navigation";
 import CreatorCouponsManager from "@/components/CreatorCouponsManager";
+import { PageHeader } from "@/components/creator/console-ui";
 
 export const metadata: Metadata = {
   title: "Store Coupons | Creator Console",
@@ -16,10 +17,9 @@ export const metadata: Metadata = {
 export default async function CreatorCouponsPage() {
   const user = await getOrCreateDbUser();
   if (!user) {
-    redirect("/handler/sign-in?redirectTo=/creator/dashboard");
+    redirect("/handler/sign-in?redirectTo=/creator/coupons");
   }
 
-  // Fetch creator's specific store coupons
   const storeCoupons = await db
     .select({
       id: coupons.id,
@@ -31,24 +31,16 @@ export default async function CreatorCouponsPage() {
     })
     .from(coupons)
     .where(eq(coupons.creatorId, user.id))
-    .orderBy(desc(coupons.createdAt));
+    .orderBy(desc(coupons.createdAt))
+    .limit(200);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="border-b border-border/40 pb-5">
-        <h1 className="text-2xl font-black tracking-tight text-foreground">
-          Store Coupons
-        </h1>
-        <p className="text-xs text-muted-foreground mt-1">
-          Create discount codes valid across all your storefront products.
-        </p>
-      </div>
-
-      {/* Coupons Manager */}
-      <div>
-        <CreatorCouponsManager initialCoupons={storeCoupons} />
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Coupons"
+        description="Discount codes that apply to every product in your store."
+      />
+      <CreatorCouponsManager initialCoupons={storeCoupons} />
     </div>
   );
 }

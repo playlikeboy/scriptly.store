@@ -1,9 +1,19 @@
-import { getProductsAction, getCategoriesAction } from "@/lib/actions/products";
-import { ProductCard } from "@/components/SearchFilter";
-import { ProductPagination } from "@/components/ProductPagination";
 import { Metadata } from "next";
+import { getProductsAction, getCategoriesAction } from "@/lib/actions/products";
+import {
+  CatalogEmpty,
+  CatalogHeader,
+  CatalogPagination,
+  CatalogShell,
+  ProductGrid,
+  ResultCount,
+  categoryNameMap,
+  parsePage,
+} from "@/app/explore/_components/catalog";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 24;
 
 interface PageProps {
   params: Promise<{
@@ -14,9 +24,17 @@ interface PageProps {
   }>;
 }
 
+function safeDecode(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tag } = await params;
-  const decodedTag = decodeURIComponent(tag);
+  const decodedTag = safeDecode(tag);
   return {
     title: "Tagged as #" + decodedTag + " | ScriptlyStore",
     description: "Browse premium digital assets tagged with " + decodedTag + " on ScriptlyStore.",
@@ -26,53 +44,46 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function TagPage({ params, searchParams }: PageProps) {
   const { tag } = await params;
   const resolvedSearchParams = await searchParams;
-  const decodedTag = decodeURIComponent(tag);
-  const currentPage = parseInt(resolvedSearchParams.page || "1");
+  const decodedTag = safeDecode(tag);
+  const currentPage = parsePage(resolvedSearchParams.page);
 
-  const { products: productsList, totalPages, total } = await getProductsAction({
-    tag: decodedTag,
-    page: currentPage,
-    limit: 12,
-  });
-
-  const categoriesList = await getCategoriesAction();
+  const [categoriesList, { products: productsList, totalPages, total }] = await Promise.all([
+    getCategoriesAction(),
+    getProductsAction({
+      tag: decodedTag,
+      page: currentPage,
+      limit: PAGE_SIZE,
+    }),
+  ]);
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <div className="container max-w-7xl mx-auto px-4 py-12 md:py-20 space-y-12">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border/60 pb-10">
-          <div className="space-y-2">
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tighter text-foreground uppercase">
-              #{decodedTag}
-            </h1>
-            <p className="text-muted-foreground font-medium">
-              Browsing {total} {total === 1 ? "asset" : "assets"} with this tag
-            </p>
-          </div>
-        </div>
+    <CatalogShell>
+      <CatalogHeader
+        breadcrumbs={[
+          { label: "Home", href: "/" },
+          { label: "Explore", href: "/explore" },
+          { label: `#${decodedTag}` },
+        ]}
+        title={<>Tagged #{decodedTag}</>}
+        description={`Browsing ${total.toLocaleString("en-IN")} ${total === 1 ? "asset" : "assets"} with this tag.`}
+      />
 
-        <div className="space-y-16">
-          {productsList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-32 border border-dashed border-border rounded-[2.5rem] bg-card/30 space-y-4">
-              <p className="text-muted-foreground text-sm font-medium">No assets found with this tag.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-              {productsList.map((prod) => (
-                <ProductCard 
-                  key={prod.id} 
-                  prod={prod} 
-                  categoryName={categoriesList.find((c) => c.slug === prod.category)?.name || prod.category} 
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="pt-8 border-t border-border/40">
-            <ProductPagination totalPages={totalPages} currentPage={currentPage} />
-          </div>
-        </div>
+      <div className="mb-6 border-t border-border pt-6">
+        <ResultCount total={total} page={currentPage} limit={PAGE_SIZE} />
       </div>
-    </div>
+
+      {productsList.length === 0 ? (
+        <CatalogEmpty
+          title={`No assets tagged #${decodedTag}`}
+          body="Tags are added by creators. Try searching for the term instead."
+          action={{ href: `/search?search=${encodeURIComponent(decodedTag)}`, label: `Search “${decodedTag}”` }}
+        />
+      ) : (
+        <>
+          <ProductGrid products={productsList} categoryNames={categoryNameMap(categoriesList)} />
+          <CatalogPagination totalPages={totalPages} currentPage={currentPage} />
+        </>
+      )}
+    </CatalogShell>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { loadRazorpayScript } from "@/lib/payments/razorpay-loader";
 import { createLinkRazorpayOrderAction, verifyLinkPaymentAction } from "@/lib/actions/payment-links";
-import { ShieldCheck, Lock, ExternalLink, CheckCircle2, ArrowRight, Loader2, CreditCard, Sparkles } from "lucide-react";
+import { CircleCheck, ExternalLink, ArrowRight, Loader2, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -19,6 +19,29 @@ interface PaymentCardProps {
   slug?: string;
 }
 
+interface RazorpaySuccessResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayFailureResponse {
+  error?: { description?: string };
+}
+
+/** Only http(s) destinations are followed; anything else (e.g. `javascript:`) falls back home. */
+function safeRedirect(url: string | undefined | null) {
+  return url && /^(https?:\/\/|\/(?!\/))/i.test(url.trim()) ? url.trim() : "/";
+}
+
+function hostnameOf(url: string) {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
 export default function PaymentCard({
   title,
   price,
@@ -28,13 +51,15 @@ export default function PaymentCard({
   redirectUrl,
   linkId,
 }: PaymentCardProps) {
+  const fieldId = useId();
   const [payerName, setPayerName] = useState("");
   const [payerEmail, setPayerEmail] = useState("");
   const [payerPhone, setPayerPhone] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [countdown, setCountdown] = useState(3);
-  const [redirectDestination, setRedirectDestination] = useState(redirectUrl);
+  const [redirectDestination, setRedirectDestination] = useState(() => safeRedirect(redirectUrl));
 
   const formattedPrice = new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -43,30 +68,31 @@ export default function PaymentCard({
   }).format(price);
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isSuccess && countdown > 0) {
-      timer = setTimeout(() => setCountdown(c => c - 1), 1000);
-    } else if (isSuccess && countdown === 0) {
+    if (!isSuccess) return;
+    if (countdown === 0) {
       window.location.href = redirectDestination;
+      return;
     }
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(timer);
   }, [isSuccess, countdown, redirectDestination]);
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payerEmail || !payerEmail.includes("@")) {
-      toast.error("Please enter a valid email address for your payment receipt.");
+      setEmailError("Enter a valid email so we can send your receipt.");
       return;
     }
+    setEmailError(null);
 
     setIsLoading(true);
     try {
       const isLoaded = await loadRazorpayScript();
       if (!isLoaded || !window.Razorpay) {
-        throw new Error("Unable to load secure Razorpay gateway. Please check your internet.");
+        throw new Error("The payment window failed to load. Check your connection and try again.");
       }
 
-      // Create Razorpay Order on server
+      // Create Razorpay order on server
       const order = await createLinkRazorpayOrderAction({
         linkId,
         title,
@@ -90,17 +116,17 @@ export default function PaymentCard({
           contact: payerPhone,
         },
         theme: {
-          color: "#58CC02", // Duolingo green
+          color: "#C2410C",
         },
         modal: {
           ondismiss: () => {
             setIsLoading(false);
-            toast.info("Payment was cancelled.");
+            toast.info("Payment window closed. You have not been charged.");
           },
         },
-        handler: async (response: any) => {
+        handler: async (response: RazorpaySuccessResponse) => {
           try {
-            toast.loading("Verifying payment...", { id: "verify" });
+            toast.loading("Verifying payment…", { id: "verify" });
             const verifyRes = await verifyLinkPaymentAction({
               orderId: response.razorpay_order_id,
               paymentId: response.razorpay_payment_id,
@@ -116,61 +142,49 @@ export default function PaymentCard({
             toast.dismiss("verify");
 
             if (verifyRes.success) {
-              setRedirectDestination(verifyRes.redirectUrl);
+              setRedirectDestination(safeRedirect(verifyRes.redirectUrl));
               setIsSuccess(true);
-              toast.success("Payment verified successfully!");
             } else {
-              toast.error("Signature verification failed.");
+              toast.error("We couldn't verify the payment signature. Contact the seller with your payment ID.");
               setIsLoading(false);
             }
-          } catch (err: any) {
+          } catch (err) {
             toast.dismiss("verify");
-            toast.error(err.message || "Payment verification failed.");
+            toast.error(err instanceof Error ? err.message : "Payment verification failed.");
             setIsLoading(false);
           }
         },
       };
 
       const rzp = new window.Razorpay(options);
-      rzp.on("payment.failed", (errResponse: any) => {
+      rzp.on("payment.failed", (errResponse: RazorpayFailureResponse) => {
         setIsLoading(false);
         toast.error(errResponse.error?.description || "Payment failed. Please try again.");
       });
       rzp.open();
-    } catch (err: any) {
-      toast.error(err.message || "Could not initiate payment.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start the payment.");
       setIsLoading(false);
     }
   };
 
   if (isSuccess) {
     return (
-      <div className="w-full max-w-md mx-auto p-8 rounded-3xl bg-card/80 border border-emerald-500/30 backdrop-blur-xl shadow-2xl text-center space-y-6 animate-in fade-in zoom-in-95 duration-300">
-        <div className="w-16 h-16 rounded-full bg-emerald-500/10 border-2 border-emerald-500 flex items-center justify-center mx-auto text-emerald-500 animate-bounce">
-          <CheckCircle2 className="w-8 h-8" />
-        </div>
-
-        <div className="space-y-2">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" /> Payment Successful
-          </span>
-          <h2 className="text-2xl font-black text-foreground">Thank You!</h2>
-          <p className="text-sm text-muted-foreground">
-            Your payment of <strong className="text-foreground">{formattedPrice}</strong> for <strong className="text-foreground">{title}</strong> was received.
-          </p>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-muted/40 border border-border/40 text-xs text-muted-foreground space-y-1">
-          <p>Redirecting you to your destination in</p>
-          <p className="text-2xl font-black text-emerald-500">{countdown}s</p>
-        </div>
-
-        <Button
-          asChild
-          className="w-full bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black uppercase tracking-wider rounded-2xl py-6 shadow-[0_4px_0_#46A302] active:translate-y-1 active:shadow-none transition-all"
-        >
+      <div role="status" className="w-full max-w-md rounded-2xl border border-border bg-card p-6 sm:p-8">
+        <CircleCheck className="size-7 text-success" strokeWidth={1.75} aria-hidden="true" />
+        <h1 className="mt-4 font-display text-3xl text-foreground">Payment received</h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Your payment of <span className="tabular font-medium text-foreground">{formattedPrice}</span> for{" "}
+          <span className="font-medium text-foreground">{title}</span> was received.
+        </p>
+        <p className="mt-6 text-sm text-muted-foreground" aria-live="polite">
+          Redirecting to {hostnameOf(redirectDestination)} in{" "}
+          <span className="tabular font-medium text-foreground">{countdown}s</span>
+        </p>
+        <Button asChild size="lg" className="mt-4 w-full">
           <a href={redirectDestination}>
-            Continue to Destination Now <ArrowRight className="w-4 h-4 ml-2" />
+            Continue now
+            <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
           </a>
         </Button>
       </div>
@@ -178,124 +192,96 @@ export default function PaymentCard({
   }
 
   return (
-    <div className="w-full max-w-md mx-auto rounded-3xl bg-card/90 border border-border/60 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden transition-all duration-300 hover:border-primary/30">
-      {/* Header Banner */}
-      <div className="p-6 border-b border-border/40 bg-muted/20 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider">
-            <CreditCard className="w-3 h-3" /> Secure Payment
-          </span>
-          <span className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground">
-            <Lock className="w-3 h-3 text-emerald-500" /> 256-bit SSL
-          </span>
-        </div>
-
-        <div>
-          <h1 className="text-xl md:text-2xl font-black text-foreground tracking-tight line-clamp-2">
-            {title}
-          </h1>
-          {description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-3 leading-relaxed">
-              {description}
-            </p>
-          )}
-        </div>
-
-        <div className="pt-2 flex items-baseline justify-between">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Amount</span>
-          <span className="text-3xl font-black text-foreground tracking-tight">
-            {formattedPrice}
-          </span>
+    <div className="w-full max-w-md overflow-hidden rounded-2xl bg-card shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.12)]">
+      <div className="border-b border-border p-6">
+        <p className="text-sm text-muted-foreground">Payment for</p>
+        <h1 className="mt-1 line-clamp-2 font-display text-2xl leading-tight text-foreground md:text-3xl">{title}</h1>
+        {description && (
+          <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
+        )}
+        <div className="mt-5 flex items-baseline justify-between gap-4">
+          <span className="text-sm text-muted-foreground">Total</span>
+          <span className="tabular text-3xl font-semibold tracking-tight text-foreground">{formattedPrice}</span>
         </div>
       </div>
 
-      {/* Form Area */}
-      <form onSubmit={handlePay} className="p-6 space-y-4">
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
-              Your Email Address <span className="text-rose-500">*</span>
-            </label>
-            <Input
-              type="email"
-              required
-              value={payerEmail}
-              onChange={(e) => setPayerEmail(e.target.value)}
-              placeholder="alex@developer.com"
-              className="rounded-xl bg-background/80 border-border/60 focus:border-primary text-sm h-11"
-            />
-            <p className="text-[10px] text-muted-foreground">Payment receipt & confirmation will be sent here.</p>
-          </div>
+      <form onSubmit={handlePay} className="space-y-4 p-6" noValidate>
+        <div className="space-y-1.5">
+          <label htmlFor={`${fieldId}-email`} className="text-sm font-medium text-foreground">
+            Email <span className="text-destructive" aria-hidden="true">*</span>
+          </label>
+          <Input
+            id={`${fieldId}-email`}
+            type="email"
+            required
+            autoComplete="email"
+            value={payerEmail}
+            onChange={(e) => {
+              setPayerEmail(e.target.value);
+              if (emailError) setEmailError(null);
+            }}
+            placeholder="you@example.com"
+            aria-invalid={!!emailError}
+            aria-describedby={`${fieldId}-email-hint`}
+            className="h-11"
+          />
+          <p id={`${fieldId}-email-hint`} className={emailError ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+            {emailError || "Payment receipt & confirmation will be sent here."}
+          </p>
+        </div>
 
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
-              Your Name <span className="text-muted-foreground/60 text-[9px]">(Optional)</span>
+            <label htmlFor={`${fieldId}-name`} className="text-sm font-medium text-foreground">
+              Name <span className="font-normal text-muted-foreground">(optional)</span>
             </label>
             <Input
+              id={`${fieldId}-name`}
               type="text"
+              autoComplete="name"
               value={payerName}
               onChange={(e) => setPayerName(e.target.value)}
-              placeholder="Alex Doe"
-              className="rounded-xl bg-background/80 border-border/60 focus:border-primary text-sm h-11"
+              className="h-11"
             />
           </div>
-
           <div className="space-y-1.5">
-            <label className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
-              Phone Number <span className="text-muted-foreground/60 text-[9px]">(Optional)</span>
+            <label htmlFor={`${fieldId}-phone`} className="text-sm font-medium text-foreground">
+              Phone <span className="font-normal text-muted-foreground">(optional)</span>
             </label>
             <Input
+              id={`${fieldId}-phone`}
               type="tel"
+              autoComplete="tel"
               value={payerPhone}
               onChange={(e) => setPayerPhone(e.target.value)}
               placeholder="+91 98765 43210"
-              className="rounded-xl bg-background/80 border-border/60 focus:border-primary text-sm h-11"
+              className="h-11"
             />
           </div>
         </div>
 
-        {/* Destination preview */}
-        <div className="p-3 rounded-xl bg-muted/25 border border-border/40 text-[11px] text-muted-foreground flex items-center justify-between">
-          <span className="truncate pr-2">
-            Redirects after payment to: <strong className="text-foreground truncate">{(() => {
-              try {
-                return new URL(redirectUrl).hostname || redirectUrl;
-              } catch {
-                return redirectUrl;
-              }
-            })()}</strong>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ExternalLink className="size-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          <span className="truncate">
+            After payment you&apos;ll return to <span className="font-medium text-foreground">{hostnameOf(redirectUrl)}</span>
           </span>
-          <ExternalLink className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-        </div>
+        </p>
 
-        {/* CTA Button */}
-        <Button
-          type="submit"
-          disabled={isLoading}
-          className="w-full bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-sm uppercase tracking-wider rounded-2xl py-6 shadow-[0_4px_0_#46A302] active:translate-y-1 active:shadow-none transition-all duration-150 flex items-center justify-center gap-2"
-        >
+        <Button type="submit" variant="accent" size="xl" disabled={isLoading} aria-busy={isLoading} className="w-full">
           {isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Processing...
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              Processing…
             </>
           ) : (
             <>
-              Pay {formattedPrice} with Razorpay
-              <ArrowRight className="w-4 h-4" />
+              <Lock className="size-4" strokeWidth={1.75} aria-hidden="true" />
+              Pay <span className="tabular">{formattedPrice}</span>
             </>
           )}
         </Button>
 
-        {/* Trust Badges */}
-        <div className="pt-2 flex items-center justify-center gap-4 text-[10px] text-muted-foreground font-semibold">
-          <span className="flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3 text-emerald-500" /> Razorpay Verified
-          </span>
-          <span>•</span>
-          <span>Instant Redirection</span>
-          <span>•</span>
-          <span>Scriptly Secured</span>
-        </div>
+        <p className="text-center text-xs text-muted-foreground">Razorpay verified · Instant redirection</p>
       </form>
     </div>
   );

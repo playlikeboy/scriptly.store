@@ -1,39 +1,23 @@
 "use client";
 
-import * as React from "react";
 import { useTheme } from "next-themes";
+import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Sun, Moon } from "lucide-react";
 
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = React.useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
 
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return (
-      <Button variant="outline" size="icon" className="w-10 h-10 rounded-xl" aria-label="Toggle theme">
-        <div className="w-4 h-4" />
-      </Button>
-    );
-  }
-
+  // Icons swap via the `dark` class next-themes sets before paint, so no
+  // mounted-state placeholder is needed to avoid a hydration mismatch.
   return (
     <Button
-      variant="outline"
-      size="icon"
-      className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      aria-label="Toggle theme"
+      variant="ghost"
+      size="icon-sm"
+      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+      aria-label="Switch between light and dark theme"
     >
-      {theme === "dark" ? (
-        <Moon className="w-5 h-5 text-[#1CB0F6]" />
-      ) : (
-        <Sun className="w-5 h-5 text-[#FFC800]" />
-      )}
+      <Sun className="size-4 dark:hidden" strokeWidth={1.75} aria-hidden="true" />
+      <Moon className="hidden size-4 dark:block" strokeWidth={1.75} aria-hidden="true" />
     </Button>
   );
 }

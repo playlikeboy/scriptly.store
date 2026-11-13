@@ -9,8 +9,9 @@ export default function robots(): MetadataRoute.Robots {
         "/admin/",
         "/dashboard/",
         "/api/",
+        "/handler/",
         "/purchase-success",
-        "/cart"
+        "/cart",
       ],
     },
     sitemap: "https://scriptly.store/sitemap.xml",

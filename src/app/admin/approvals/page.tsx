@@ -1,26 +1,19 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import { requireAdminPage } from "@/app/admin/_components/require-admin";
+import { asc, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { products, users } from "@/db/schema";
+import AdminApprovalsList from "@/components/AdminApprovalsList";
+import { AdminPageHeader } from "@/app/admin/_components/admin-ui";
 
 export const metadata: Metadata = {
   title: "Approvals",
 };
 
-import { db } from "@/db";
-import { products, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getOrCreateDbUser } from "@/lib/auth-utils";
-import { redirect } from "next/navigation";
-import AdminApprovalsList from "@/components/AdminApprovalsList";
-
 export default async function AdminApprovalsPage() {
-  const user = await getOrCreateDbUser();
-  if (!user || user.role !== "admin") {
-    redirect("/dashboard");
-  }
-
-  // Fetch all products with 'pending' status
-  // Join the users table to get the creator's display name and primary email
+  await requireAdminPage();
   const pendingProducts = await db
     .select({
       id: products.id,
@@ -28,6 +21,7 @@ export default async function AdminApprovalsPage() {
       slug: products.slug,
       price: products.price,
       category: products.category,
+      thumbnail: products.thumbnail,
       fileUrl: products.fileUrl,
       createdAt: products.createdAt,
       creator: {
@@ -37,19 +31,15 @@ export default async function AdminApprovalsPage() {
     })
     .from(products)
     .leftJoin(users, eq(products.creatorId, users.id))
-    .where(eq(products.status, "pending"));
+    .where(eq(products.status, "pending"))
+    .orderBy(asc(products.createdAt));
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight">
-          Product Submissions
-        </h1>
-        <p className="text-sm text-neutral-400 mt-1">
-          Review, download, and approve scripts submitted by creators before they are listed on the store.
-        </p>
-      </div>
-
+    <div className="space-y-6">
+      <AdminPageHeader
+        title="Product submissions"
+        description="Review, download and approve products submitted by creators before they are listed on the store."
+      />
       <AdminApprovalsList pendingItems={pendingProducts} />
     </div>
   );

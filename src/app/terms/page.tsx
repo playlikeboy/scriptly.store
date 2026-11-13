@@ -1,4 +1,6 @@
 import { Metadata } from "next";
+import Link from "next/link";
+import { LegalDocument, REGISTERED_OFFICE, type LegalSection } from "./_components/LegalDocument";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -8,123 +10,154 @@ export const metadata: Metadata = {
   },
 };
 
+const sections: LegalSection[] = [
+  {
+    id: "acceptance",
+    title: "1. Acceptance of Terms",
+    body: (
+      <p>
+        Welcome to ScriptlyStore (https://scriptly.store/). This website is owned and operated by Strivio Inc. By accessing, browsing, or using this website, or by purchasing any digital products offered, you agree to comply with and be bound by these Terms of Service. If you do not agree to these terms, please do not use this website.
+      </p>
+    ),
+  },
+  {
+    id: "changes",
+    title: "2. Changes to Terms",
+    body: (
+      <p>
+        Strivio Inc. reserves the right to modify or replace these Terms of Service at any time without prior notice. Any changes will be updated directly on this page with a revised &ldquo;effective date.&rdquo; Your continued use of the website following the posting of changes constitutes acceptance of those changes.
+      </p>
+    ),
+  },
+  {
+    id: "eligibility",
+    title: "3. User Eligibility & Accounts",
+    body: (
+      <>
+        <p>
+          By using this website, you represent that you are at least 18 years of age, or accessing the site under the supervision of a parent or guardian.
+        </p>
+        <p>
+          To purchase products or access specific areas, you must authenticate securely using Hexclave. You are solely responsible for maintaining the confidentiality of your credentials and accounts, and you agree to accept responsibility for all activities that occur under your account.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "licensing",
+    title: "4. Digital Products & Licensing",
+    body: (
+      <>
+        <p>
+          All templates, UI kits, boilerplates, code scripts, prompts, and related files sold on ScriptlyStore are digital assets. Upon successful purchase, Strivio Inc. grants you a non-exclusive, non-transferable, revocable license to use the downloaded asset in accordance with the specific license type selected at checkout:
+        </p>
+        <ul>
+          <li><strong>Standard License:</strong> Allows use for personal projects or a single commercial project for a single client. Redistribution or resale of source files is prohibited.</li>
+          <li><strong>Commercial License:</strong> Allows usage for multiple commercial projects and multi-client projects. Redistribution of source files remains strictly prohibited.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "creators",
+    title: "5. Creator Storefronts & Script Uploads",
+    body: (
+      <>
+        <p>
+          ScriptlyStore permits approved users (&ldquo;Creators&rdquo;) to upload digital scripts, tools, and boilerplates to the platform.
+        </p>
+        <ul>
+          <li><strong>Store Naming:</strong> Creators may choose a store name to represent their catalog. Store names must not infringe upon trademarks, brands, or third-party intellectual property. Strivio Inc. reserves the right to rename or suspend stores violating this policy.</li>
+          <li><strong>Listing Splits & Payouts:</strong> In the current release, automated payouts are supported via Razorpay Route. For creators who configure a Direct Bank Transfer payout method, payments are split dynamically: if an item is purchased via an affiliate referral link, 65% goes directly to the creator, 30% to the referring affiliate, and 5% is retained as a platform commission. For direct purchases without an affiliate, the uploader receives 95% and the platform retains 5%. Other payout types are accrued and settled on-demand.</li>
+          <li><strong>Moderation:</strong> All creator uploads are unlisted by default. They are subject to code security reviews and copyright verification by our administration panel before approval.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "coupons",
+    title: "6. Store-Specific Coupons & Promotions",
+    body: (
+      <>
+        <p>Creators may generate promotional discount codes (&ldquo;Coupons&rdquo;) for their storefronts.</p>
+        <ul>
+          <li><strong>Coupon Scope:</strong> Store-specific coupons created by a Creator will apply discount calculations solely to items listed under that Creator&apos;s storefront.</li>
+          <li><strong>Free Listings & Date Interval Promotions:</strong> Creators and Administrators can specify date ranges for percentage discounts or mark items as &ldquo;Free.&rdquo; Free checkouts bypass payment processors entirely, creating direct download permissions.</li>
+          <li><strong>Misuse Prevention:</strong> Generating fraudulent coupons or exploiting checkout discount calculations to circumvent standard platform billing is strictly prohibited and will result in immediate storefront termination.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "payments",
+    title: "7. Pricing & Payments",
+    body: (
+      <>
+        <p>
+          All prices listed on ScriptlyStore are in United States Dollars (USD). Payments are charged in Indian Rupees (INR) at the prevailing exchange rate at checkout. Prices are subject to change without notice.
+        </p>
+        <p>
+          Payments are securely processed via <strong>Razorpay</strong>. Where split payments are enabled, payments are split instantly: the platform retains a 5% commission, the affiliate receives a 30% commission (if referred), and the creator receives the remaining amount (65% for referred sales, or 95% for direct sales). By placing an order, you authorize us and our payment processor to charge the designated payment method for the total order amount. Strivio Inc. does not store or process cardholder credentials on its servers. Free checkouts bypass Razorpay processing entirely.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "refunds",
+    title: "8. Refunds & Cancellation",
+    body: (
+      <p>
+        Due to the immediate delivery and downloadable nature of digital products, all purchases are non-refundable and final. Please review product details, documentation, and compatibility requirements carefully before purchasing. Refund exceptions are only handled under the strict guidelines specified in our <Link href="/refund">Cancellation & Refund Policy</Link>.
+      </p>
+    ),
+  },
+  {
+    id: "ip",
+    title: "9. Intellectual Property & UGC Rights",
+    body: (
+      <p>
+        All website infrastructure is the property of Strivio Inc. Creators retain ownership of their uploaded scripts and files, but grant ScriptlyStore a worldwide, royalty-free license to host, display, and distribute the files to authorized purchasers. All uploads must be free of malware and must not infringe on third-party copyrights.
+      </p>
+    ),
+  },
+  {
+    id: "liability",
+    title: "10. Limitation of Liability",
+    body: (
+      <p>
+        To the maximum extent permitted by applicable law, Strivio Inc. and its affiliates shall not be liable for any indirect, incidental, special, or consequential damages resulting from the use or inability to use our products or services, even if advised of the possibility of such damages.
+      </p>
+    ),
+  },
+  {
+    id: "law",
+    title: "11. Governing Law & Jurisdiction",
+    body: (
+      <p>
+        These Terms of Service and any transactions entered into on this website are governed by and construed in accordance with the laws of India. Any legal actions, disputes, or claims arising out of these terms shall be subject to the exclusive jurisdiction of the courts located in Gurugram, Haryana, India.
+      </p>
+    ),
+  },
+];
+
 export default function TermsPage() {
   return (
-    <div className="container max-w-3xl mx-auto px-4 py-20 space-y-12">
-      <div className="space-y-4 border-b border-border/60 pb-10">
-        <h1 className="text-3xl md:text-5xl font-extrabold tracking-tighter text-foreground">Terms of Service</h1>
-        <p className="text-muted-foreground font-medium uppercase tracking-widest text-[10px]">Effective as of June 13, 2026</p>
-      </div>
-
-      <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8 text-muted-foreground font-medium leading-relaxed">
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">1. Acceptance of Terms</h2>
+    <LegalDocument
+      path="/terms"
+      title="Terms of Service"
+      updated="Effective as of June 13, 2026"
+      sections={sections}
+      contact={
+        <>
           <p>
-            Welcome to ScriptlyStore (https://scriptly.store/). This website is owned and operated by Strivio Inc. By accessing, browsing, or using this website, or by purchasing any digital products offered, you agree to comply with and be bound by these Terms of Service. If you do not agree to these terms, please do not use this website.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">2. Changes to Terms</h2>
-          <p>
-            Strivio Inc. reserves the right to modify or replace these Terms of Service at any time without prior notice. Any changes will be updated directly on this page with a revised "effective date." Your continued use of the website following the posting of changes constitutes acceptance of those changes.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">3. User Eligibility & Accounts</h2>
-          <p>
-            By using this website, you represent that you are at least 18 years of age, or accessing the site under the supervision of a parent or guardian. 
+            ScriptlyStore is a digital marketplace owned and operated by Strivio Inc. For legal and support inquiries, contact{" "}
+            <a href="mailto:mail@scriptly.store">mail@scriptly.store</a>.
           </p>
           <p>
-            To purchase products or access specific areas, you must authenticate securely using Hexclave. You are solely responsible for maintaining the confidentiality of your credentials and accounts, and you agree to accept responsibility for all activities that occur under your account.
+            <strong>Registered Office:</strong> {REGISTERED_OFFICE}
           </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">4. Digital Products & Licensing</h2>
-          <p>
-            All templates, UI kits, boilerplates, code scripts, prompts, and related files sold on ScriptlyStore are digital assets. Upon successful purchase, Strivio Inc. grants you a non-exclusive, non-transferable, revocable license to use the downloaded asset in accordance with the specific license type selected at checkout:
-          </p>
-          <ul className="list-disc pl-5 space-y-2">
-            <li><strong>Standard License:</strong> Allows use for personal projects or a single commercial project for a single client. Redistribution or resale of source files is prohibited.</li>
-            <li><strong>Commercial License:</strong> Allows usage for multiple commercial projects and multi-client projects. Redistribution of source files remains strictly prohibited.</li>
-          </ul>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">5. Creator Storefronts & Script Uploads</h2>
-          <p>
-            ScriptlyStore permits approved users ("Creators") to upload digital scripts, tools, and boilerplates to the platform. 
-          </p>
-          <ul className="list-disc pl-5 space-y-2">
-            <li><strong>Store Naming:</strong> Creators may choose a store name to represent their catalog. Store names must not infringe upon trademarks, brands, or third-party intellectual property. Strivio Inc. reserves the right to rename or suspend stores violating this policy.</li>
-            <li><strong>Listing Splits & Payouts:</strong> In the current release, automated payouts are supported via Razorpay Route. For creators who configure a Direct Bank Transfer payout method, payments are split dynamically: if an item is purchased via an affiliate referral link, 65% goes directly to the creator, 30% to the referring affiliate, and 5% is retained as a platform commission. For direct purchases without an affiliate, the uploader receives 95% and the platform retains 5%. Other payout types are accrued and settled on-demand.</li>
-            <li><strong>Moderation:</strong> All creator uploads are unlisted by default. They are subject to code security reviews and copyright verification by our administration panel before approval.</li>
-          </ul>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">6. Store-Specific Coupons & Promotions</h2>
-          <p>
-            Creators may generate promotional discount codes ("Coupons") for their storefronts.
-          </p>
-          <ul className="list-disc pl-5 space-y-2">
-            <li><strong>Coupon Scope:</strong> Store-specific coupons created by a Creator will apply discount calculations solely to items listed under that Creator's storefront.</li>
-            <li><strong>Free Listings & Date Interval Promotions:</strong> Creators and Administrators can specify date ranges for percentage discounts or mark items as "Free." Free checkouts bypass payment processors entirely, creating direct download permissions.</li>
-            <li><strong>Misuse Prevention:</strong> Generating fraudulent coupons or exploiting checkout discount calculations to circumvent standard platform billing is strictly prohibited and will result in immediate storefront termination.</li>
-          </ul>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">7. Pricing & Payments</h2>
-          <p>
-            All prices listed on ScriptlyStore are in Indian Rupees (INR) or United States Dollars (USD), as indicated, and are subject to change without notice.
-          </p>
-          <p>
-            Payments are securely processed via <strong>Razorpay</strong>. Where split payments are enabled, payments are split instantly: the platform retains a 5% commission, the affiliate receives a 30% commission (if referred), and the creator receives the remaining amount (65% for referred sales, or 95% for direct sales). By placing an order, you authorize us and our payment processor to charge the designated payment method for the total order amount. Strivio Inc. does not store or process cardholder credentials on its servers. Free checkouts bypass Razorpay processing entirely.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">8. Refunds & Cancellation</h2>
-          <p>
-            Due to the immediate delivery and downloadable nature of digital products, all purchases are non-refundable and final. Please review product details, documentation, and compatibility requirements carefully before purchasing. Refund exceptions are only handled under the strict guidelines specified in our <a href="/refund" className="underline hover:text-foreground">Cancellation & Refund Policy</a>.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">9. Intellectual Property & UGC Rights</h2>
-          <p>
-            All website infrastructure is the property of Strivio Inc. Creators retain ownership of their uploaded scripts and files, but grant ScriptlyStore a worldwide, royalty-free license to host, display, and distribute the files to authorized purchasers. All uploads must be free of malware and must not infringe on third-party copyrights.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">10. Limitation of Liability</h2>
-          <p>
-            To the maximum extent permitted by applicable law, Strivio Inc. and its affiliates shall not be liable for any indirect, incidental, special, or consequential damages resulting from the use or inability to use our products or services, even if advised of the possibility of such damages.
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-foreground tracking-tight">11. Governing Law & Jurisdiction</h2>
-          <p>
-            These Terms of Service and any transactions entered into on this website are governed by and construed in accordance with the laws of India. Any legal actions, disputes, or claims arising out of these terms shall be subject to the exclusive jurisdiction of the courts located in Gurugram, Haryana, India.
-          </p>
-        </section>
-
-        <section className="space-y-4 border-t border-border/40 pt-10">
-          <p className="text-xs italic">
-            ScriptlyStore is a digital marketplace owned and operated by Strivio Inc. 
-            For legal inquiries, contact mail@scriptly.store. 
-            For support queries, please reach out to mail@scriptly.store.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            <strong>Registered Office:</strong> Strivio Inc., DLF Phase 3, Sector 24, Gurugram, Haryana - 122002, India.
-          </p>
-        </section>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }

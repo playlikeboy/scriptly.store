@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateCreatorPayoutSettingsAction } from "@/lib/actions/creator";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Coins, Loader2, Save, Landmark, ShieldCheck } from "lucide-react";
+import { updateCreatorPayoutSettingsAction } from "@/lib/actions/creator";
+import { Button } from "@/components/ui/button";
+import { Panel, errorTextClass, fieldClass, hintClass, labelClass } from "@/components/creator/console-ui";
+import { cn } from "@/lib/utils";
 
 interface PayoutSettingsEditorProps {
   initialBankName: string | null;
@@ -12,26 +16,50 @@ interface PayoutSettingsEditorProps {
   initialBankIfsc: string | null;
 }
 
+type Field = "bankName" | "bankAccountName" | "bankAccountNumber" | "bankIfsc";
+type Errors = Partial<Record<Field | "form", string>>;
+
+const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
 export default function PayoutSettingsEditor({
   initialBankName,
   initialBankAccountName,
   initialBankAccountNumber,
   initialBankIfsc,
 }: PayoutSettingsEditorProps) {
-  const [bankName, setBankName] = useState(initialBankName || "");
-  const [bankAccountName, setBankAccountName] = useState(initialBankAccountName || "");
-  const [bankAccountNumber, setBankAccountNumber] = useState(initialBankAccountNumber || "");
-  const [bankIfsc, setBankIfsc] = useState(initialBankIfsc || "");
-
+  const router = useRouter();
+  const [values, setValues] = useState<Record<Field, string>>({
+    bankName: initialBankName || "",
+    bankAccountName: initialBankAccountName || "",
+    bankAccountNumber: initialBankAccountNumber || "",
+    bankIfsc: initialBankIfsc || "",
+  });
+  const [errors, setErrors] = useState<Errors>({});
   const [isPending, startTransition] = useTransition();
+
+  const set = (field: Field, value: string) => {
+    setValues((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+  };
+
+  const validate = (): Errors => {
+    const e: Errors = {};
+    if (!values.bankName.trim()) e.bankName = "Enter your bank’s name.";
+    if (!values.bankAccountName.trim()) e.bankAccountName = "Enter the name on the account.";
+    const acct = values.bankAccountNumber.trim();
+    if (!acct) e.bankAccountNumber = "Enter your account number.";
+    else if (!/^\d{9,18}$/.test(acct)) e.bankAccountNumber = "Account numbers are 9–18 digits.";
+    const ifsc = values.bankIfsc.trim();
+    if (!ifsc) e.bankIfsc = "Enter your branch IFSC.";
+    else if (!IFSC_RE.test(ifsc)) e.bankIfsc = "IFSC is 11 characters, like HDFC0000240.";
+    return e;
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!bankName || !bankAccountName || !bankAccountNumber || !bankIfsc) {
-      toast.error("All bank details are required for automated split routing.");
-      return;
-    }
+    const next = validate();
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
 
     startTransition(async () => {
       try {
@@ -39,124 +67,124 @@ export default function PayoutSettingsEditor({
           "bank",
           "",
           "",
-          bankName,
-          bankAccountName,
-          bankAccountNumber,
-          bankIfsc
+          values.bankName.trim(),
+          values.bankAccountName.trim(),
+          values.bankAccountNumber.trim(),
+          values.bankIfsc.trim()
         );
-        if (res.success) {
-          toast.success("Bank payout details saved successfully!");
+        if (res?.success) {
+          toast.success("Bank details saved.");
+          router.refresh();
         } else {
-          toast.error("Failed to update bank details.");
+          setErrors({ form: "Could not save your bank details. Try again." });
         }
-      } catch (err: any) {
-        toast.error(err.message || "Something went wrong.");
+      } catch (err) {
+        setErrors({
+          form: err instanceof Error ? err.message : "Could not save your bank details. Try again.",
+        });
       }
     });
   };
 
+  const fieldProps = (field: Field) => ({
+    id: `payout-${field}`,
+    value: values[field],
+    "aria-invalid": Boolean(errors[field]),
+    "aria-describedby": errors[field] ? `payout-${field}-error` : undefined,
+  });
+
+  const errorFor = (field: Field) =>
+    errors[field] ? (
+      <p id={`payout-${field}-error`} className={errorTextClass}>
+        {errors[field]}
+      </p>
+    ) : null;
+
   return (
-    <form
-      onSubmit={handleSave}
-      className="p-6 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md shadow-sm space-y-6"
+    <Panel
+      title="Bank account"
+      description="Used by Razorpay Route to settle your 95% share of each sale."
     >
-      <div className="flex items-center justify-between pb-4 border-b border-border/40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-            <Coins className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-sm font-black text-foreground">Direct Bank Payouts</h3>
-            <p className="text-[11px] text-muted-foreground">Automated Razorpay Route settlements</p>
-          </div>
+      <form onSubmit={handleSave} noValidate className="space-y-4 p-4 sm:p-5">
+        <div className="space-y-1.5">
+          <label htmlFor="payout-bankName" className={labelClass}>
+            Bank name
+          </label>
+          <input
+            {...fieldProps("bankName")}
+            type="text"
+            onChange={(e) => set("bankName", e.target.value)}
+            placeholder="e.g. HDFC Bank"
+            className={fieldClass}
+          />
+          {errorFor("bankName")}
         </div>
-        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-          <ShieldCheck className="w-3 h-3" /> 95% Direct Split
-        </span>
-      </div>
 
-      {/* Info Notice */}
-      <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/15 text-xs space-y-1">
-        <div className="flex items-center gap-1.5 font-bold text-foreground text-xs">
-          <Landmark className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Automated Sub-Merchant Settlement</span>
+        <div className="space-y-1.5">
+          <label htmlFor="payout-bankAccountName" className={labelClass}>
+            Account holder name
+          </label>
+          <input
+            {...fieldProps("bankAccountName")}
+            type="text"
+            autoComplete="name"
+            onChange={(e) => set("bankAccountName", e.target.value)}
+            placeholder="Exactly as on your bank records"
+            className={fieldClass}
+          />
+          {errorFor("bankAccountName")}
         </div>
-        <p className="text-[11px] text-muted-foreground leading-relaxed">
-          Customer checkouts automatically split 95% directly to your registered bank account without manual invoice filing.
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor="payout-bankAccountNumber" className={labelClass}>
+              Account number
+            </label>
+            <input
+              {...fieldProps("bankAccountNumber")}
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              onChange={(e) => set("bankAccountNumber", e.target.value.replace(/\s/g, ""))}
+              placeholder="000123456789"
+              className={cn(fieldClass, "font-mono tabular")}
+            />
+            {errorFor("bankAccountNumber")}
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="payout-bankIfsc" className={labelClass}>
+              IFSC code
+            </label>
+            <input
+              {...fieldProps("bankIfsc")}
+              type="text"
+              autoComplete="off"
+              maxLength={11}
+              onChange={(e) => set("bankIfsc", e.target.value.toUpperCase().replace(/\s/g, ""))}
+              placeholder="HDFC0000240"
+              className={cn(fieldClass, "font-mono uppercase")}
+            />
+            {errorFor("bankIfsc")}
+          </div>
+        </div>
+
+        <p className={hintClass}>
+          Checkouts split automatically: 95% to this account, 5% platform fee. No invoices to file.
         </p>
-      </div>
 
-      {/* Input Fields */}
-      <div className="space-y-4">
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-            Bank Name
-          </label>
-          <input
-            type="text"
-            value={bankName}
-            onChange={(e) => setBankName(e.target.value)}
-            placeholder="e.g. HDFC Bank, ICICI Bank, SBI"
-            className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs focus:outline-none focus:border-primary/50 transition-colors font-medium placeholder:text-muted-foreground/60"
-          />
+        {errors.form ? (
+          <p role="alert" className="rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {errors.form}
+          </p>
+        ) : null}
+
+        <div className="flex justify-end">
+          <Button type="submit" disabled={isPending}>
+            {isPending ? <Loader2 className="animate-spin" /> : null}
+            {isPending ? "Saving…" : "Save bank details"}
+          </Button>
         </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-            Account Holder Name
-          </label>
-          <input
-            type="text"
-            value={bankAccountName}
-            onChange={(e) => setBankAccountName(e.target.value)}
-            placeholder="Name exactly as on your bank records"
-            className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs focus:outline-none focus:border-primary/50 transition-colors font-medium placeholder:text-muted-foreground/60"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-              Account Number
-            </label>
-            <input
-              type="text"
-              value={bankAccountNumber}
-              onChange={(e) => setBankAccountNumber(e.target.value)}
-              placeholder="Enter Account Number"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-mono focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/60"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block">
-              IFSC Code
-            </label>
-            <input
-              type="text"
-              value={bankIfsc}
-              onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
-              placeholder="e.g. HDFC0000240"
-              className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background/50 text-foreground text-xs font-mono focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/60"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="pt-2">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full inline-flex items-center justify-center px-4 py-2.5 bg-primary text-primary-foreground hover:brightness-105 disabled:opacity-50 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer gap-2 shadow-[0_3px_0_var(--duo-feather-shadow)] active:translate-y-px active:shadow-none"
-        >
-          {isPending ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Save className="w-3.5 h-3.5" />
-          )}
-          Save Payout Settings
-        </button>
-      </div>
-    </form>
+      </form>
+    </Panel>
   );
 }

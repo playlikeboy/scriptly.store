@@ -2,16 +2,23 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { Play, Image as ImageIcon, Film, Eye } from "lucide-react";
+import { Play, Image as ImageIcon, Film } from "lucide-react";
 import TweetEmbed from "@/components/TweetEmbed";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface ProductMediaSwitcherProps {
   videoUrl: string | null;
   previewGif: string | null;
   thumbnail: string | null;
   title: string;
+}
+
+type MediaTab = "video" | "gif" | "poster";
+
+function isMp4(url: string) {
+  const lower = url.toLowerCase();
+  return lower.split("?")[0].endsWith(".mp4") || lower.includes(".mp4");
 }
 
 export default function ProductMediaSwitcher({
@@ -24,8 +31,8 @@ export default function ProductMediaSwitcher({
   const hasGif = !!previewGif;
   const hasPoster = !!thumbnail;
 
-  const defaultTab = hasVideo ? "video" : hasGif ? "gif" : "poster";
-  const [activeTab, setActiveTab] = useState<"video" | "gif" | "poster">(defaultTab);
+  const defaultTab: MediaTab = hasVideo ? "video" : hasGif ? "gif" : "poster";
+  const [activeTab, setActiveTab] = useState<MediaTab>(defaultTab);
   const [isPlaying, setIsPlaying] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<number>(3 / 2);
 
@@ -46,7 +53,7 @@ export default function ProductMediaSwitcher({
     }
   };
 
-  const handleTabChange = (tab: "video" | "gif" | "poster") => {
+  const handleTabChange = (tab: MediaTab) => {
     setActiveTab(tab);
     if (tab !== "video") setIsPlaying(false);
   };
@@ -64,41 +71,46 @@ export default function ProductMediaSwitcher({
     />
   ) : null;
 
+  const tabs: { id: MediaTab; label: string; icon: typeof Play; show: boolean }[] = [
+    { id: "video", label: "Video", icon: Play, show: hasVideo },
+    { id: "gif", label: "Demo GIF", icon: Film, show: hasGif },
+    { id: "poster", label: "Cover", icon: ImageIcon, show: hasPoster },
+  ];
+  const visibleTabs = tabs.filter((t) => t.show);
+
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-border/60 bg-black overflow-hidden shadow-2xl shadow-primary/5">
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-2xl bg-secondary">
         {activeTab === "video" && videoUrl && (
           tweetId ? (
-            <div className="flex justify-center p-6 bg-neutral-950/40 min-h-[300px] items-center">
+            <div className="flex min-h-[300px] items-center justify-center p-4 sm:p-6">
               <TweetEmbed id={tweetId} />
             </div>
           ) : !isPlaying ? (
             <AspectRatio ratio={16 / 9}>
-              <div
-                className="absolute inset-0 w-full h-full cursor-pointer group overflow-hidden"
+              <button
+                type="button"
                 onClick={() => setIsPlaying(true)}
+                className="group absolute inset-0 size-full overflow-hidden focus-visible:outline-offset-[-4px]"
+                aria-label={`Play ${title} preview video`}
               >
                 {optimizedPoster}
-                <div className="absolute inset-0 bg-black/35 group-hover:bg-black/45 transition-colors duration-300 z-20" />
-                <div className="absolute inset-0 flex items-center justify-center z-30">
-                  <div className="w-16 h-16 rounded-full bg-primary/95 text-white flex items-center justify-center shadow-xl shadow-primary/20 group-hover:scale-110 group-hover:bg-primary transition-all duration-300">
-                    <Play className="w-7 h-7 fill-white translate-x-0.5" />
-                  </div>
-                </div>
-                <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md text-[10px] font-bold text-white uppercase tracking-widest px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-1.5 z-30">
-                  <Eye className="w-3.5 h-3.5 text-primary animate-pulse" />
-                  <span>Click to watch preview</span>
-                </div>
-              </div>
+                <span className="absolute inset-0 z-10 bg-foreground/20 transition-colors duration-200 group-hover:bg-foreground/30" />
+                <span className="absolute inset-0 z-20 flex items-center justify-center">
+                  <span className="flex size-16 items-center justify-center rounded-full bg-background text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.3)] transition-transform duration-200 ease-out group-hover:scale-[1.05]">
+                    <Play className="size-6 translate-x-0.5 fill-current" strokeWidth={1.75} aria-hidden="true" />
+                  </span>
+                </span>
+              </button>
             </AspectRatio>
           ) : (
             <AspectRatio ratio={16 / 9}>
-              {videoUrl.split("?")[0].toLowerCase().endsWith(".mp4") || videoUrl.toLowerCase().includes(".mp4") ? (
+              {isMp4(videoUrl) ? (
                 <video
                   src={videoUrl}
                   controls
                   autoPlay
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 size-full bg-foreground object-contain"
                   poster={thumbnail || undefined}
                   preload="metadata"
                 />
@@ -106,7 +118,7 @@ export default function ProductMediaSwitcher({
                 <iframe
                   src={videoUrl.replace("watch?v=", "embed/").split("&")[0] + "?autoplay=1"}
                   title={title}
-                  className="absolute inset-0 w-full h-full"
+                  className="absolute inset-0 size-full"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />
@@ -117,12 +129,12 @@ export default function ProductMediaSwitcher({
 
         {activeTab === "gif" && previewGif && (
           <AspectRatio ratio={aspectRatio}>
-            <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
+            <div className="absolute inset-0 flex size-full items-center justify-center">
               <img
                 src={previewGif}
-                alt={title + " Preview GIF"}
+                alt={`${title} preview`}
                 onLoad={handleImageLoad}
-                className="relative max-w-full max-h-full object-contain z-10"
+                className="relative max-h-full max-w-full object-contain"
                 loading="lazy"
                 decoding="async"
               />
@@ -132,58 +144,42 @@ export default function ProductMediaSwitcher({
 
         {activeTab === "poster" && thumbnail && (
           <AspectRatio ratio={aspectRatio}>
-            <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black/40">
-              {optimizedPoster}
-            </div>
+            <div className="absolute inset-0 size-full">{optimizedPoster}</div>
           </AspectRatio>
         )}
 
         {!videoUrl && !previewGif && !thumbnail && (
           <AspectRatio ratio={16 / 9}>
-            <div className="absolute inset-0 flex items-center justify-center bg-muted text-muted-foreground font-black uppercase tracking-widest text-xs">
-              No Media Available
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+              No preview media for this product yet
             </div>
           </AspectRatio>
         )}
       </div>
 
-      {((hasVideo ? 1 : 0) + (hasGif ? 1 : 0) + (hasPoster ? 1 : 0)) > 1 && (
-        <div className="flex flex-wrap items-center gap-2.5">
-          {hasVideo && (
-            <Button
-              variant={activeTab === "video" ? "default" : "outline"}
-              onClick={() => handleTabChange("video")}
-              size="sm"
-              className="cursor-pointer font-bold h-9 rounded-xl px-4 text-xs"
-            >
-              <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
-              Watch Video
-            </Button>
-          )}
-
-          {hasGif && (
-            <Button
-              variant={activeTab === "gif" ? "default" : "outline"}
-              onClick={() => handleTabChange("gif")}
-              size="sm"
-              className="cursor-pointer font-bold h-9 rounded-xl px-4 text-xs"
-            >
-              <Film className="w-3.5 h-3.5 mr-1.5" />
-              Interactive GIF
-            </Button>
-          )}
-
-          {hasPoster && (
-            <Button
-              variant={activeTab === "poster" ? "default" : "outline"}
-              onClick={() => handleTabChange("poster")}
-              size="sm"
-              className="cursor-pointer font-bold h-9 rounded-xl px-4 text-xs"
-            >
-              <ImageIcon className="w-3.5 h-3.5 mr-1.5" />
-              Screenshot Poster
-            </Button>
-          )}
+      {visibleTabs.length > 1 && (
+        <div role="group" aria-label="Preview media" className="inline-flex rounded-[10px] bg-secondary p-1">
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => handleTabChange(tab.id)}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium transition-colors duration-150",
+                  active
+                    ? "bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Icon className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

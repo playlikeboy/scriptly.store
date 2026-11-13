@@ -1,84 +1,128 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/db";
 import { coupons, products } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
-import { getProductEffectivePrice } from "@/lib/price-utils";
+import { and, eq, inArray } from "drizzle-orm";
+import { formatPrice, getProductEffectivePrice } from "@/lib/price-utils";
 
+export const dynamic = "force-dynamic";
+
+// Coupon state can change at any moment; never cache validation results.
+const NO_STORE = { "Cache-Control": "no-store" };
+
+const querySchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(1, "Coupon code is required.")
+    .max(64, "Coupon code is too long.")
+    .transform((c) => c.toUpperCase()),
+  amount: z.coerce.number().int().min(0).max(1_000_000_000).catch(0),
+  productIds: z
+    .string()
+    .optional()
+    .transform((s) =>
+      s
+        ? [...new Set(s.split(",").map((id) => id.trim()).filter((id) => id.length > 0 && id.length <= 128))].slice(0, 50)
+        : []
+    ),
+});
+
+function reply(body: Record<string, unknown>, status = 200) {
+  return NextResponse.json(body, { status, headers: NO_STORE });
+}
+
+/**
+ * Advisory coupon check for the cart UI. The authoritative discount is always
+ * recomputed server-side in createRazorpayOrderAction.
+ */
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code")?.trim().toUpperCase();
-  const amountStr = searchParams.get("amount");
-  const productIdsStr = searchParams.get("productIds");
+  const { searchParams } = request.nextUrl;
+  const parsed = querySchema.safeParse({
+    code: searchParams.get("code") ?? "",
+    amount: searchParams.get("amount") ?? undefined,
+    productIds: searchParams.get("productIds") ?? undefined,
+  });
 
-  if (!code) {
-    return NextResponse.json({ success: false, message: "Coupon code is required." }, { status: 400 });
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || "Invalid coupon request.";
+    return reply({ success: false, message }, 400);
   }
 
-  const amount = amountStr ? parseInt(amountStr, 10) : 0;
-  const productIds = productIdsStr ? productIdsStr.split(",").map(id => id.trim()).filter(Boolean) : [];
+  const { code, amount, productIds } = parsed.data;
 
   try {
-    const coupon = await db.query.coupons.findFirst({
-      where: eq(coupons.code, code),
-    });
+    const [coupon] = await db
+      .select({
+        id: coupons.id,
+        code: coupons.code,
+        discountType: coupons.discountType,
+        discountValue: coupons.discountValue,
+        minPurchaseAmount: coupons.minPurchaseAmount,
+        active: coupons.active,
+        creatorId: coupons.creatorId,
+      })
+      .from(coupons)
+      .where(eq(coupons.code, code))
+      .limit(1);
 
     if (!coupon) {
-      return NextResponse.json({ success: false, message: "Coupon code does not exist." });
+      return reply({ success: false, message: "Coupon code does not exist." });
     }
 
     if (!coupon.active) {
-      return NextResponse.json({ success: false, message: "This coupon code is inactive." });
+      return reply({ success: false, message: "This coupon code is inactive." });
     }
 
-    // Creator specific coupon check
     if (coupon.creatorId) {
+      // Store-specific coupon
       if (productIds.length === 0) {
-        return NextResponse.json({
+        return reply({
           success: false,
           message: "This is a store-specific coupon. Product selection is required to validate it.",
         });
       }
 
-      // Query products in cart
-      const cartProducts = await db.query.products.findMany({
-        where: inArray(products.id, productIds),
-      });
-
-      // Filter products belonging to coupon creator
-      const eligibleProducts = cartProducts.filter(p => p.creatorId === coupon.creatorId);
+      // Only this creator's items in the cart, filtered in SQL
+      const eligibleProducts = await db
+        .select({
+          price: products.price,
+          isFree: products.isFree,
+          discountPercent: products.discountPercent,
+          promoStart: products.promoStart,
+          promoEnd: products.promoEnd,
+        })
+        .from(products)
+        .where(and(inArray(products.id, productIds), eq(products.creatorId, coupon.creatorId)));
 
       if (eligibleProducts.length === 0) {
-        return NextResponse.json({
+        return reply({
           success: false,
-          message: "This coupon is only valid for items from a specific creator's store, which are not present in your cart.",
+          message:
+            "This coupon is only valid for items from a specific creator's store, which are not present in your cart.",
         });
       }
 
-      // Calculate effective price of eligible items
-      const eligibleSubtotal = eligibleProducts.reduce((sum, p) => {
-        const promo = getProductEffectivePrice(p);
-        return sum + promo.effectivePrice;
-      }, 0);
+      const eligibleSubtotal = eligibleProducts.reduce(
+        (sum, p) => sum + getProductEffectivePrice(p).effectivePrice,
+        0
+      );
 
       if (eligibleSubtotal < coupon.minPurchaseAmount) {
-        const minAmountInUSD = (coupon.minPurchaseAmount / 100).toFixed(2);
-        return NextResponse.json({
+        return reply({
           success: false,
-          message: `This coupon requires a minimum purchase of $${minAmountInUSD} USD of items from this store.`,
+          message: `This coupon requires a minimum purchase of ${formatPrice(coupon.minPurchaseAmount)} of items from this store.`,
         });
       }
-    } else {
+    } else if (amount < coupon.minPurchaseAmount) {
       // Global coupon
-      if (amount < coupon.minPurchaseAmount) {
-        const minAmountInUSD = (coupon.minPurchaseAmount / 100).toFixed(2);
-        return NextResponse.json({
-          success: false,
-          message: `This coupon requires a minimum purchase of $${minAmountInUSD} USD.`,
-        });
-      }
+      return reply({
+        success: false,
+        message: `This coupon requires a minimum purchase of ${formatPrice(coupon.minPurchaseAmount)}.`,
+      });
     }
 
-    return NextResponse.json({
+    return reply({
       success: true,
       coupon: {
         id: coupon.id,
@@ -90,7 +134,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("Coupon validation error:", error);
-    return NextResponse.json({ success: false, message: "Server error validating coupon." }, { status: 500 });
+    return reply({ success: false, message: "Server error validating coupon." }, 500);
   }
 }
-export const dynamic = "force-dynamic";

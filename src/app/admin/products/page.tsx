@@ -1,14 +1,16 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import { requireAdminPage } from "@/app/admin/_components/require-admin";
 import Link from "next/link";
 import { db } from "@/db";
 import { products } from "@/db/schema";
 import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import AdminSearchSort from "@/app/admin/products/AdminSearchSort";
 import AdminProductsTable from "@/app/admin/products/AdminProductsTable";
+import AdminQueryBar from "@/app/admin/_components/AdminQueryBar";
+import { AdminFilterTabs, AdminPageHeader, buildHref, parsePage } from "@/app/admin/_components/admin-ui";
 
 export const metadata: Metadata = {
   title: "Products Inventory | Admin Console",
@@ -25,8 +27,9 @@ interface PageProps {
 }
 
 export default async function AdminProductsPage({ searchParams }: PageProps) {
+  await requireAdminPage();
   const resolvedParams = await searchParams;
-  const currentPage = Math.max(1, parseInt(resolvedParams.page || "1", 10) || 1);
+  const currentPage = parsePage(resolvedParams.page);
   const currentSearch = resolvedParams.search?.trim() || "";
   const currentSort = resolvedParams.sort || "newest";
   const currentStatus = resolvedParams.status || "all";
@@ -112,42 +115,71 @@ export default async function AdminProductsPage({ searchParams }: PageProps) {
   const totalCount = Number(filteredCountResult[0]?.count || 0);
   const totalPages = Math.ceil(totalCount / limit);
 
+  const baseParams = {
+    search: currentSearch || undefined,
+    sort: currentSort !== "newest" ? currentSort : undefined,
+  };
+  const statusTabs = [
+    { value: "all", label: "All", count: allCount },
+    { value: "published", label: "Published", count: publishedCount },
+    { value: "draft", label: "Drafts", count: draftCount },
+    { value: "featured", label: "Featured", count: featuredCount },
+    { value: "unfeatured", label: "Not featured", count: notFeaturedCount },
+  ].map((tab) => ({
+    label: tab.label,
+    count: tab.count,
+    active: currentStatus === tab.value,
+    href: buildHref("/admin/products", baseParams, { status: tab.value === "all" ? undefined : tab.value }),
+  }));
+
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-border/60 pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Catalog
-          </p>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Products</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage visibility, featured placement, and product content from one place.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Products"
+        description="Manage visibility, featured placement and listing content from one place."
+        actions={
+          <Button asChild>
+            <Link href="/admin/products/new">
+              <Plus aria-hidden="true" />
+              New product
+            </Link>
+          </Button>
+        }
+      />
 
-        <Button asChild className="rounded-xl sm:shrink-0">
-          <Link href="/admin/products/new">
-            <Plus className="mr-2 h-4 w-4" />
-            New product
-          </Link>
-        </Button>
-      </header>
-
-      <AdminSearchSort />
+      <div className="space-y-3">
+        <AdminQueryBar
+          searchLabel="Search products"
+          placeholder="Search by title"
+          selects={[
+            {
+              key: "sort",
+              label: "Sort products",
+              defaultValue: "newest",
+              options: [
+                { value: "newest", label: "Newest first" },
+                { value: "oldest", label: "Oldest first" },
+                { value: "price_asc", label: "Price: low to high" },
+                { value: "price_desc", label: "Price: high to low" },
+                { value: "featured_first", label: "Featured first" },
+                { value: "title_asc", label: "Title: A–Z" },
+                { value: "title_desc", label: "Title: Z–A" },
+              ],
+            },
+          ]}
+        />
+        <AdminFilterTabs label="Filter by status" tabs={statusTabs} />
+      </div>
 
       <AdminProductsTable
+        key={`${currentStatus}|${currentSearch}|${currentSort}|${currentPage}`}
         products={productsList}
         totalCount={totalCount}
-        allCount={allCount}
-        publishedCount={publishedCount}
-        draftCount={draftCount}
-        featuredCount={featuredCount}
-        notFeaturedCount={notFeaturedCount}
         currentPage={currentPage}
         totalPages={totalPages}
         limit={limit}
-        currentStatus={currentStatus}
         currentSearch={currentSearch}
+        pagerParams={{ ...baseParams, status: currentStatus !== "all" ? currentStatus : undefined }}
       />
     </div>
   );

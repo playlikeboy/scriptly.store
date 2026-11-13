@@ -1,97 +1,120 @@
 import Link from "next/link";
-import { ArrowRight, Download, ShieldCheck, Code2, Zap, Sparkles } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import HeroProductVisual from "@/components/home/HeroProductVisual";
+import {
+  type HomeCategory,
+  type HomeProduct,
+  ProductPrice,
+  ProductThumb,
+  categoryName,
+} from "@/components/home/product-bits";
 
 interface HeroSectionProps {
-  featuredProducts?: any[];
+  featuredProducts?: HomeProduct[];
+  categories?: HomeCategory[];
 }
 
-export default function HeroSection({ featuredProducts = [] }: HeroSectionProps) {
-  const primaryProduct = featuredProducts[0];
-  const floatingProducts = featuredProducts.slice(1, 3);
+const PROMISES = [
+  "Full source code",
+  "Instant ZIP delivery",
+  "Commercial licensing",
+  "No recurring subscriptions",
+];
+
+export default function HeroSection({ featuredProducts = [], categories = [] }: HeroSectionProps) {
+  const [lead, ...rest] = featuredProducts;
+  const supporting = rest.slice(0, 2);
 
   return (
-    <section className="relative overflow-hidden border-b border-border/50 bg-gradient-to-b from-secondary/25 via-background to-background py-16 sm:py-24">
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-          {/* Editorial Content Left Column */}
-          <div className="lg:col-span-6 space-y-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-mono font-medium text-muted-foreground shadow-2xs">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Developer Commerce Platform</span>
-              </div>
-              <Link
-                href="/featured"
-                className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-mono font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all shadow-2xs group"
-              >
-                <Sparkles className="h-3 w-3 animate-pulse text-amber-500 group-hover:rotate-12 transition-transform" />
-                <span>Explore Featured Products</span>
-                <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+    <section aria-labelledby="home-hero-title" className="border-b border-border">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 pt-12 pb-16 sm:px-6 md:pt-16 md:pb-24 lg:grid-cols-12 lg:gap-16 lg:px-8">
+        <div className="flex flex-col justify-center lg:col-span-5">
+          <h1
+            id="home-hero-title"
+            className="font-display text-[2.75rem] leading-[1.02] font-medium tracking-[-0.03em] text-balance text-foreground sm:text-6xl md:text-7xl"
+          >
+            Build less.
+            <br />
+            <span className="italic text-muted-foreground">Ship more.</span>
+          </h1>
+          <p className="mt-6 max-w-[46ch] text-lg leading-relaxed text-pretty text-muted-foreground">
+            Production-ready code, SaaS boilerplates, automation scripts and developer tools for
+            founders who ship.
+          </p>
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <Button asChild size="lg">
+              <Link href="/explore">
+                Explore the catalogue
+                <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
               </Link>
-            </div>
-
-            <div className="space-y-3">
-              <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tight text-foreground leading-[1.08]">
-                Build less. <br />
-                <span className="text-muted-foreground">Ship more.</span>
-              </h1>
-              <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-xl">
-                Production-ready code, SaaS boilerplates, automation scripts, and developer tools for founders who ship.
-              </p>
-            </div>
-
-            {/* CTAs */}
-            <div className="flex flex-wrap items-center gap-3.5 pt-2">
-              <Button asChild size="lg" className="rounded-xl font-bold px-6">
-                <Link href="/explore" className="flex items-center gap-2">
-                  <span>Explore Catalog</span>
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild variant="secondary" size="lg" className="rounded-xl font-bold px-5 border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 transition-all shadow-xs">
-                <Link href="/featured" className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-500" />
-                  <span>Featured Products</span>
-                </Link>
-              </Button>
-              <Button asChild variant="outline" size="lg" className="rounded-xl font-bold px-5">
-                <Link href="/creator">
-                  <span>Sell on Scriptly</span>
-                </Link>
-              </Button>
-            </div>
-
-            {/* Micro-Trust Signals */}
-            <div className="pt-6 border-t border-border/40 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <Download className="h-3.5 w-3.5 text-primary shrink-0" />
-                <span>Instant ZIP delivery</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                <span>Commercial licensing</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Code2 className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                <span>Full source code</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Zap className="h-3.5 w-3.5 text-primary shrink-0" />
-                <span>No recurring subscriptions</span>
-              </div>
-            </div>
+            </Button>
+            <Button asChild size="lg" variant="outline">
+              <Link href="/featured">Featured products</Link>
+            </Button>
           </div>
 
-          {/* Living Marketplace Visual Right Column */}
-          <div className="lg:col-span-6">
-            <HeroProductVisual
-              primaryProduct={primaryProduct}
-              floatingProducts={floatingProducts}
-            />
-          </div>
+          <ul className="mt-10 grid grid-cols-1 gap-x-6 gap-y-2.5 text-sm text-muted-foreground min-[400px]:grid-cols-2">
+            {PROMISES.map((item) => (
+              <li key={item} className="flex items-center gap-2">
+                <Check className="size-4 shrink-0 text-foreground" strokeWidth={1.75} aria-hidden="true" />
+                {item}
+              </li>
+            ))}
+          </ul>
         </div>
+
+        {lead && (
+          <div className="lg:col-span-7">
+            <h2 className="sr-only">Featured products</h2>
+            <Link
+              href={`/products/${lead.slug}`}
+              className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+            >
+              <ProductThumb
+                product={lead}
+                preload
+                sizes="(min-width: 1280px) 720px, (min-width: 1024px) 58vw, 100vw"
+                className="rounded-2xl shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.12)]"
+              />
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h3 className="truncate text-lg font-medium text-foreground transition-colors group-hover:text-primary">
+                    {lead.title}
+                  </h3>
+                  <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
+                    {categoryName(lead.category, categories)} · {lead.shortDescription}
+                  </p>
+                </div>
+                <ProductPrice product={lead} className="shrink-0 text-base" />
+              </div>
+            </Link>
+
+            {supporting.length > 0 && (
+              <ul className="mt-8 grid grid-cols-1 gap-6 border-t border-border pt-6 sm:grid-cols-2">
+                {supporting.map((product) => (
+                  <li key={product.id}>
+                    <Link
+                      href={`/products/${product.slug}`}
+                      className="group flex items-center gap-4 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+                    >
+                      <ProductThumb product={product} sizes="128px" className="w-28 shrink-0 rounded-lg" />
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-medium text-foreground transition-colors group-hover:text-primary">
+                          {product.title}
+                        </h3>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {categoryName(product.category, categories)}
+                        </p>
+                        <ProductPrice product={product} className="mt-1.5 text-sm" />
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -1,8 +1,7 @@
 import { Metadata } from "next";
 import React from "react";
 import Link from "next/link";
-import { ArrowLeft, ShieldCheck, UserCheck } from "lucide-react";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Account & Authentication | ScriptlyStore",
@@ -24,40 +23,31 @@ export default async function AuthLayout({ children, params }: AuthLayoutProps) 
 
   if (isAccountSettings) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex flex-col justify-between relative overflow-hidden">
-        <CyberBackground />
-
-        <div className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 py-8 md:py-14 space-y-6 relative z-10">
-          {/* Breadcrumb / Back Link */}
-          <div className="flex items-center justify-between gap-4">
+      <div className="bg-background text-foreground">
+        <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 sm:px-6 md:py-12">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
               href="/dashboard"
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:underline"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Customer Inventory</span>
+              <ArrowLeft aria-hidden="true" className="size-4" />
+              Back to dashboard
             </Link>
-
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-500 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-              <ShieldCheck className="w-3 h-3" /> Hexclave Secured
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ShieldCheck aria-hidden="true" strokeWidth={1.75} className="size-3.5 text-success" />
+              Secured by Hexclave
             </span>
           </div>
 
-          {/* Clean Header */}
-          <div className="border-b border-border/40 pb-5">
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-              Account Settings
-            </h1>
-            <p className="text-xs text-muted-foreground mt-1">
-              Manage your developer profile, linked emails, multi-factor authentication, and active sessions.
+          <header className="border-b border-border pb-6">
+            <h1 className="font-display text-3xl text-balance text-foreground md:text-4xl">Account settings</h1>
+            <p className="mt-2 max-w-2xl text-sm text-pretty text-muted-foreground">
+              Manage your developer profile, linked emails, multi-factor authentication and active sessions.
             </p>
-          </div>
+          </header>
 
-          {/* Spacious Settings Surface */}
-          <div className="rounded-3xl border border-border/50 bg-card/35 backdrop-blur-xl p-5 sm:p-8 shadow-sm overflow-hidden min-h-[500px]">
-            <div className="hexclave-auth-container w-full">
-              {children}
-            </div>
+          <div className="min-h-[500px] overflow-hidden rounded-2xl border border-border bg-card p-4 sm:p-8">
+            <div className="hexclave-auth-container w-full">{children}</div>
           </div>
         </div>
       </div>
@@ -68,38 +58,32 @@ export default async function AuthLayout({ children, params }: AuthLayoutProps) 
   const isSignUp = currentRoute === "sign-up";
   const isForgotPassword = currentRoute === "forgot-password";
 
-  let title = "Welcome Back";
-  let subtitle = "Sign in to access your digital assets and scripts";
+  let title = "Welcome back";
+  let subtitle = "Sign in to access your digital assets and scripts.";
 
   if (isSignUp) {
-    title = "Create Account";
-    subtitle = "Join ScriptlyStore to download and sell developer assets";
+    title = "Create your account";
+    subtitle = "Join ScriptlyStore to download and sell developer assets.";
   } else if (isForgotPassword) {
-    title = "Reset Password";
-    subtitle = "Enter your email to receive recovery instructions";
+    title = "Reset your password";
+    subtitle = "Enter your email to receive recovery instructions.";
   }
 
   return (
-    <div className="min-h-[85vh] flex flex-col items-center justify-center p-4 relative overflow-hidden bg-background text-foreground">
-      <CyberBackground />
-
-      <div className="w-full max-w-[460px] z-10 space-y-6">
-        <div className="rounded-3xl border border-border/50 bg-card/40 backdrop-blur-xl p-6 sm:p-8 shadow-xl space-y-6">
-          <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 text-primary mb-2">
-              <div className="w-5 h-5 rounded-lg bg-primary shadow-sm" />
-            </div>
-            <h1 className="text-2xl font-black tracking-tight text-foreground">{title}</h1>
-            <p className="text-xs text-muted-foreground font-medium">{subtitle}</p>
+    <div className="flex min-h-[85vh] flex-col items-center justify-center bg-background px-4 py-10 text-foreground sm:py-16">
+      <div className="w-full max-w-[440px] space-y-5">
+        <div className="rounded-2xl bg-card p-6 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-12px_rgb(0_0_0/0.12)] sm:p-8">
+          <div className="mb-6 space-y-1.5 text-center">
+            <h1 className="font-display text-3xl text-balance text-foreground">{title}</h1>
+            <p className="text-sm text-muted-foreground">{subtitle}</p>
           </div>
 
-          <div className="hexclave-auth-container">
-            {children}
-          </div>
+          <div className="hexclave-auth-container">{children}</div>
         </div>
 
-        <p className="text-center text-[10px] text-muted-foreground font-bold tracking-wider uppercase">
-          Cloud Authentication by ScriptlyStore
+        <p className="flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
+          <ShieldCheck aria-hidden="true" strokeWidth={1.75} className="size-3.5" />
+          Authentication secured by Hexclave
         </p>
       </div>
     </div>

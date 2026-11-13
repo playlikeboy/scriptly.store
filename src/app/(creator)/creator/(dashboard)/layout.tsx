@@ -2,8 +2,8 @@ import { Metadata } from "next";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import SidebarNav from "@/components/SidebarNav";
+import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import CreatorConsoleNav from "@/components/creator/CreatorConsoleNav";
 
 export const metadata: Metadata = {
   title: "Creator Console | ScriptlyStore",
@@ -20,63 +20,60 @@ export default async function CreatorDashboardLayout({
     redirect("/handler/sign-in?redirectTo=/creator/dashboard");
   }
 
-  const storeInitials = (user.storeName || user.name || "My Store")
-    .split(" ")
+  const displayName = user.storeName || user.name || "Your store";
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
     .map((n) => n[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col justify-between">
-      <div className="flex-1 flex flex-col md:flex-row max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-10 gap-8">
-        {/* Unified Sleek Minimal Sidebar */}
-        <aside className="w-full md:w-60 shrink-0 flex flex-col">
-          <div className="p-4 rounded-3xl bg-card/40 border border-border/50 backdrop-blur-xl shadow-sm flex flex-col gap-4">
-            {/* Store Identity */}
-            <div className="flex items-center gap-3 px-1 pt-1">
-              <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-primary/15 to-[#1CB0F6]/15 border border-primary/25 flex items-center justify-center text-primary font-black text-xs shrink-0">
-                {storeInitials}
-              </div>
-              <div className="space-y-0.5 min-w-0 flex-1">
-                <h2 className="text-xs font-black text-foreground truncate">
-                  {user.storeName || "Creator Store"}
-                </h2>
-                <p className="text-[10px] text-muted-foreground font-semibold truncate">
-                  {user.email}
-                </p>
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 md:flex-row md:gap-10 md:py-10 lg:px-8">
+        <aside className="w-full shrink-0 md:sticky md:top-20 md:w-56 md:self-start">
+          <div className="flex items-center gap-3 md:flex-col md:items-start md:gap-4">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <span
+                aria-hidden
+                className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-foreground text-xs font-semibold text-background"
+              >
+                {initials || "S"}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
+                <p className="truncate text-xs text-muted-foreground">{user.email}</p>
               </div>
             </div>
-
             <Link
               href={`/stores/${user.id}`}
               target="_blank"
-              className="flex items-center justify-center gap-1.5 w-full py-2 bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
+              rel="noopener noreferrer"
+              className="inline-flex shrink-0 items-center gap-1 text-sm text-primary underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              <span>View Storefront</span>
-              <ExternalLink className="w-3 h-3" />
+              View storefront
+              <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
+              <span className="sr-only">(opens in a new tab)</span>
             </Link>
+          </div>
 
-            <div className="h-px bg-border/40" />
+          <div className="mt-5 border-t border-border pt-4 md:mt-6">
+            <CreatorConsoleNav />
+          </div>
 
-            {/* Navigation Links */}
-            <SidebarNav />
-
-            <div className="h-px bg-border/40" />
-
-            {/* Customer Area Return */}
+          <div className="mt-4 hidden border-t border-border pt-4 md:block">
             <Link
               href="/dashboard"
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/30 rounded-xl transition-colors"
+              className="flex h-9 items-center gap-2 rounded-[10px] px-3 text-sm text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Customer Area</span>
+              <ArrowLeft className="size-4" strokeWidth={1.75} />
+              Customer area
             </Link>
           </div>
         </aside>
 
-        {/* Main Panel Content */}
-        <main className="flex-1 min-w-0">
+        <main id="creator-console" className="min-w-0 flex-1">
           {children}
         </main>
       </div>

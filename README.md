@@ -1,220 +1,127 @@
-# 🚀 ScriptlyStore — The Premium Developer Commerce Marketplace
-
 <div align="center">
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.2.6%20(Turbopack)-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
-[![Cloudflare](https://img.shields.io/badge/Cloudflare%20Workers-OpenNext-F38020?style=for-the-badge&logo=cloudflare)](https://workers.cloudflare.com/)
-[![Neon](https://img.shields.io/badge/Neon-PostgreSQL%20Serverless-00E599?style=for-the-badge&logo=postgresql)](https://neon.tech/)
-[![Drizzle](https://img.shields.io/badge/Drizzle%20ORM-0.45-C5F74F?style=for-the-badge&logo=drizzle)](https://orm.drizzle.team/)
-[![Hexclave](https://img.shields.io/badge/Hexclave-Auth%20Infra-4F46E5?style=for-the-badge)](https://hexclave.com/)
-[![Razorpay](https://img.shields.io/badge/Razorpay-Verified%20Payments-0C2340?style=for-the-badge&logo=razorpay)](https://razorpay.com/)
-[![Tip & Sponsor](https://img.shields.io/badge/Tip%20%26%20Sponsor-Razorpay-0C2340?style=for-the-badge&logo=razorpay)](https://razorpay.me/@iamsh)
-[![Bun](https://img.shields.io/badge/Bun-1.1+-fbf0df?style=for-the-badge&logo=bun)](https://bun.sh/)
+<img src="public/favicon.svg" width="56" height="56" alt="ScriptlyStore" />
 
-**High-performance developer marketplace for production-ready SaaS templates, automation scripts, boilerplates, and developer tools.**
+# ScriptlyStore
 
-[Live Marketplace: scriptly.store](https://scriptly.store) • [Public API Docs](https://scriptly.store/docs/api/payment-links) • [Explore Products](https://scriptly.store/explore) • [Creator Studio](https://scriptly.store/creator) • [Tip & Sponsor](https://razorpay.me/@iamsh)
+**A curated marketplace for production-ready code.**
+SaaS templates, automation scripts, landing pages, UI kits and developer tools — bought once, shipped today.
+
+[scriptly.store](https://scriptly.store) · [Explore](https://scriptly.store/explore) · [Sell on Scriptly](https://scriptly.store/creator) · [Payment Links API](https://scriptly.store/docs/api/payment-links)
+
+![Next.js 16](https://img.shields.io/badge/Next.js-16-17140F?style=flat-square&logo=next.js&logoColor=F7F6F2)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-17140F?style=flat-square&logo=cloudflare&logoColor=F7F6F2)
+![Neon Postgres](https://img.shields.io/badge/Neon-Postgres-17140F?style=flat-square&logo=postgresql&logoColor=F7F6F2)
+![Drizzle ORM](https://img.shields.io/badge/Drizzle-ORM-17140F?style=flat-square&logo=drizzle&logoColor=F7F6F2)
+![Razorpay](https://img.shields.io/badge/Razorpay-Checkout-C2410C?style=flat-square&logo=razorpay&logoColor=FFFBF5)
 
 </div>
 
 ---
 
-## 🌟 Overview
+## What it is
 
-**ScriptlyStore** is an open, edge-rendered developer marketplace where engineers, indie hackers, and creators buy and sell production code, boilerplates, automation scripts, and digital assets.
+ScriptlyStore is an edge-rendered marketplace where developers buy and sell code they would otherwise spend weeks writing. Every listing is a real, downloadable asset with screenshots, a stated license, and delivery gated behind a verified purchase.
 
-Unlike traditional legacy marketplaces that claim 30% to 50% commission cuts, Scriptly operates on a **95/5 creator-first economic model**: creators keep **95% of their gross sales**, while Scriptly retains a minimal 5% platform fee.
+Creators keep **95% of direct sales**. Affiliates earn on referred sales. Prices are listed in **US dollars** and Razorpay charges the INR equivalent at checkout.
 
-### 🔑 Key Capabilities
+| For buyers | For creators | For developers |
+|---|---|---|
+| Browse by category and subcategory, filter, sort, and buy in one step. | A studio for listings, coupons, payouts, a sales ledger and a public storefront. | Dynamic and AES-GCM encrypted payment links, a public products JSON feed, and an agent/MCP API. |
 
-1. **⚡ Scalable Directory Engine (`/explore`)**:
-   - Pure SQL database pushdown via Drizzle ORM. Millions of catalog items can be searched, filtered, and paginated in sub-millisecond response times.
-   - Nested directory routes for deep indexing and SEO:
-     - `/explore` (Universal catalog with query filters)
-     - `/explore/[category]` (Dedicated category hub, e.g. `/explore/saas-templates`)
-     - `/explore/[category]/[subcategory]` (Deep subcategory directory, e.g. `/explore/saas-templates/nextjs`)
+## Design
 
-2. **🔒 Dynamic & Key-Encrypted Payment Links (`/pay`)**:
-   - Zero-setup payment checkout links with guaranteed post-payment redirection.
-   - **Base64 JSON Schema**: Conceals parameters in URL-safe Base64 tokens.
-   - **Key-Protected AES-256-GCM**: Encrypt checkouts with a private key. Buyers can enter the key interactively or unlock directly via `&key=YOUR_KEY`.
-   - **Open Creator REST API**: Programmatically create hosted or dynamic links via `POST /api/pay/create`—open to logged-in and logged-out developers alike.
+The interface follows **Paper & Ember** — a warm, editorial system built for scanning code products quickly. Paper-toned surfaces and dense ink type keep the focus on product screenshots and prices, and a single ember accent marks where money moves. Headlines use Newsreader, the interface uses Geist, and code uses Geist Mono.
 
-3. **🎨 Duolingo-Minimal Design System & Centralized Skeletons**:
-   - Replaced heavy nested outlines with a clean, friendly, tactile interface.
-   - Centralized loading tokens (`bg-muted/40 dark:bg-muted/30`) across every route via `@/components/ui/skeleton`.
-   - Unified pricing standardized in Indian Rupee (`₹` / INR) with locale formatting.
+The full specification lives in [`DESIGN.md`](DESIGN.md).
 
-4. **🛡️ Enterprise Digital Asset Protection**:
-   - Product ZIP archives are stored securely in `/uploads` and never exposed publicly.
-   - Authenticated delivery via `/api/download/[productId]` validates order completion before streaming bytes.
+## Stack
 
-5. **🤖 Admin Process Prompt Docs (`/admin/prompts`)**:
-   - Interactive prompt center for engineering agents and administrators.
-   - Complete system prompts, JSON schemas, reference code, and edge case rules for all 6 core platform processes.
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 16 (App Router, Turbopack, React 19 Server Components) |
+| Runtime | Cloudflare Workers via [`@opennextjs/cloudflare`](https://opennext.js.org/cloudflare) |
+| Database | Neon serverless Postgres + Drizzle ORM |
+| Auth | Hexclave (`@hexclave/next`) |
+| Payments | Razorpay orders, signature verification and webhooks (USD catalog, INR charge) |
+| UI | Tailwind CSS v4, Radix/Base UI primitives, lucide icons |
 
-6. **💼 Creator Studio & Split Ledger (`/creator`)**:
-   - Creator dashboard with real-time revenue analytics, coupon management, and payout ledger tracking.
-   - Dedicated creator storefronts (`/stores/[id]`).
+## Architecture notes
 
----
-
-## 🏗️ Architecture & Project Structure
+- **SQL does the work.** Filtering, sorting, pagination and counts run in Postgres, never in JavaScript over full tables.
+- **Server-first rendering.** Pages are Server Components. Client code is limited to interactive leaves such as the cart, checkout, and filters.
+- **Money is integers.** Catalog amounts are stored in US cents. The server recomputes prices from the database and converts them to INR paise at the live rate before creating a Razorpay order.
+- **Private assets.** Archives are never public. `/api/download/[productId]` streams a file only after the buyer's completed order has been verified.
+- **Encrypted payment links.** `/pay` accepts signed Base64 tokens or `k1.<iv>.<tag>.<ciphertext>` AES-256-GCM tokens. A key can be entered on the page or passed as `&key=`.
 
 ```text
-scriptlyhq/
-├── src/
-│   ├── app/                               # Next.js App Router
-│   │   ├── (creator)/                     # Creator landing & management studio
-│   │   │   └── creator/(dashboard)/       # Products, ledger, coupons, payouts
-│   │   ├── admin/                         # Admin console & operations
-│   │   │   ├── payment-links/             # Permanent & dynamic link manager
-│   │   │   ├── products/                  # Product catalog management & approval
-│   │   │   └── prompts/                   # Process Prompt Docs center
-│   │   ├── api/                           # Public & internal REST endpoints
-│   │   │   ├── download/[productId]/      # Authenticated digital asset delivery
-│   │   │   ├── pay/create/                # Open Payment Link creation API
-│   │   │   └── webhooks/razorpay/         # Payment capture webhook handler
-│   │   ├── dashboard/                     # Customer purchase inventory & receipts
-│   │   ├── docs/                          # Public developer documentation
-│   │   │   └── api/payment-links/         # Payment Links API guide
-│   │   ├── explore/                       # Scalable explore portal
-│   │   │   ├── [category]/                # Dedicated category hub
-│   │   │   └── [category]/[subcategory]/  # Targeted subcategory directory
-│   │   ├── handler/[...stack]/            # Hexclave authentication & account settings
-│   │   ├── pay/                           # Dynamic & encrypted payment checkout
-│   │   └── products/[slug]/               # High-converting product detail pages
-│   ├── components/                        # React UI component library
-│   │   ├── admin/                         # Admin dashboards & link managers
-│   │   ├── pay/                           # Checkout cards & KeyUnlockCard
-│   │   └── ui/                            # Design tokens & Skeleton components
-│   ├── db/
-│   │   ├── index.ts                       # Neon PostgreSQL Drizzle client
-│   │   └── schema.ts                      # Database schema definitions
-│   └── lib/
-│       ├── actions/                       # Next.js Server Actions (products, orders)
-│       ├── auth-utils.ts                  # Hexclave auth & role helpers
-│       └── payments/
-│           └── link-encoder.ts            # Base64 & AES-256-GCM payment link encoder
-├── docs/                                  # In-depth technical documentation
-│   ├── ARCHITECTURE.md                    # Detailed architectural specification
-│   ├── ROUTES.md                          # Full route inventory & auth levels
-│   ├── API.md                             # REST API reference
-│   ├── PAYMENT-LINKS.md                   # Complete payment link guide
-│   ├── DESIGN-SYSTEM.md                   # Minimal UI design tokens
-│   ├── SECURITY.md                        # Security, encryption & HMAC rules
-│   ├── PERFORMANCE.md                     # Scalability & query pushdown benchmarks
-│   ├── SEO.md                             # Metadata, schema & indexing guide
-│   └── ROADMAP.md                         # Product roadmap & feature milestones
-├── open-next.config.ts                    # Cloudflare OpenNext edge configuration
-├── wrangler.jsonc                         # Cloudflare Workers configuration
-└── drizzle.config.ts                      # Drizzle Kit migration configuration
+src/
+├── app/                 Routes: explore, products, cart, pay, blog, docs, creator studio, admin
+│   └── api/             download, pay/create, webhooks/razorpay, coupons, products.json, agents
+├── components/          Feature components; ui/ holds primitives and the Skeleton
+├── db/                  Drizzle schema and Neon client
+├── lib/actions/         Server actions: products, orders, payment links, affiliates, payouts
+└── lib/payments/        Payment link encoder (Base64 / AES-GCM)
 ```
 
----
+## Getting started
 
-## 🚀 Quick Start
-
-### 1. Prerequisites
-
-- [Bun](https://bun.sh) (v1.1 or higher)
-- [Neon PostgreSQL Database](https://neon.tech)
-- [Razorpay Account](https://razorpay.com) (Test or Live API Keys)
-- [Hexclave Account](https://hexclave.com) (Project ID and Keys)
-
-### 2. Clone & Install Dependencies
+Prerequisites: [Bun](https://bun.sh) 1.1+, a [Neon](https://neon.tech) database, [Razorpay](https://razorpay.com) keys and a [Hexclave](https://hexclave.com) project.
 
 ```bash
-git clone https://github.com/SH20RAJ/scriptlyhq.git
-cd scriptlyhq
+git clone https://github.com/playlikeboy/scriptly.store.git
+cd scriptly.store
 bun install
 ```
 
-### 3. Configure Environment Variables
-
-Create `.env` and `.dev.vars` files in the project root:
+Create `.env` (Next.js) and `.dev.vars` (Wrangler) with:
 
 ```env
-# Database (Neon PostgreSQL)
 DATABASE_URL=postgresql://user:pass@ep-host.neon.tech/neondb?sslmode=require
 
-# Hexclave Authentication
-NEXT_PUBLIC_HEXCLAVE_PROJECT_ID=your_project_id
-NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY=your_publishable_key
-HEXCLAVE_SECRET_SERVER_KEY=your_secret_server_key
+NEXT_PUBLIC_HEXCLAVE_PROJECT_ID=
+NEXT_PUBLIC_HEXCLAVE_PUBLISHABLE_CLIENT_KEY=
+HEXCLAVE_SECRET_SERVER_KEY=
 
-# Razorpay Payments
-RAZORPAY_KEY_ID=rzp_live_xxxxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
-RAZORPAY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
 
-# Admin Control
-ADMIN_EMAILS=shaswatraj@gmail.com,admin@scriptly.store
+ADMIN_EMAILS=admin@example.com
 ```
-
-### 4. Push Database Schema
-
-Push schemas directly to your Neon PostgreSQL instance using Drizzle Kit:
 
 ```bash
-bun x drizzle-kit push
+bun x drizzle-kit push   # apply schema to Neon
+bun run dev              # http://localhost:3000
 ```
 
-### 5. Start Development Server
+## Deployment
 
-Run the development server with Turbopack:
+Pushing to `main` triggers [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). The workflow syncs runtime secrets to Cloudflare, then builds and deploys the Worker. To deploy manually:
 
 ```bash
-bun run dev
+bun run deploy     # opennextjs-cloudflare build && deploy
+bun run preview    # local workerd preview
 ```
 
-Visit `http://localhost:3000` in your browser.
+## Documentation
 
----
+| Topic | File |
+|---|---|
+| Architecture | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Routes and access levels | [`docs/ROUTES.md`](docs/ROUTES.md) |
+| REST API | [`docs/API.md`](docs/API.md) |
+| Payment links | [`docs/PAYMENT-LINKS.md`](docs/PAYMENT-LINKS.md) |
+| Security | [`docs/SECURITY.md`](docs/SECURITY.md) |
+| Performance | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| SEO | [`docs/SEO.md`](docs/SEO.md) |
+| Design system | [`DESIGN.md`](DESIGN.md) |
+| Contributor and agent rules | [`AGENTS.md`](AGENTS.md) |
 
-## ⚡ Deployment to Cloudflare Workers
+## Support
 
-ScriptlyStore is compiled for edge execution on Cloudflare Workers using `@opennextjs/cloudflare`:
+Built by [Shaswat Raj](https://github.com/SH20RAJ). If Scriptly saves you time, you can [sponsor development](https://razorpay.me/@iamsh).
 
-```bash
-# Build and deploy to Cloudflare
-bun run deploy
-```
+## License
 
-This automates:
-1. Turbopack production compilation.
-2. Cloudflare Worker edge function bundling.
-3. Edge asset uploading and cache configuration.
-4. Deployment to your custom domain (`scriptly.store`).
-
----
-
-## 📚 Technical Documentation
-
-Explore the detailed architecture guides in the [`docs/`](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs) folder:
-
-- [System Architecture](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/ARCHITECTURE.md)
-- [Route Inventory & Ownership](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/ROUTES.md)
-- [API Reference](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/API.md)
-- [Payment Links Engine](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/PAYMENT-LINKS.md)
-- [Security & Cryptography](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/SECURITY.md)
-- [Design System](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/DESIGN-SYSTEM.md)
-- [Performance & Scalability](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/PERFORMANCE.md)
-- [SEO & Discoverability](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/SEO.md)
-- [Product Roadmap](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/docs/ROADMAP.md)
-
----
-
-## 💖 Sponsor & Support
-
-If you find ScriptlyStore or any of the open-source boilerplates helpful, consider tipping or sponsoring continued development:
-
-[![Tip & Sponsor](https://img.shields.io/badge/Tip%20%26%20Sponsor-Razorpay-0C2340?style=for-the-badge&logo=razorpay)](https://razorpay.me/@iamsh)
-
-- **Razorpay Direct Tip & Sponsor**: [https://razorpay.me/@iamsh](https://razorpay.me/@iamsh)
-
----
-
-## 📄 License
-
-ScriptlyStore is built by [Shaswat Raj](https://github.com/SH20RAJ) ([Tip & Sponsor](https://razorpay.me/@iamsh)). All rights reserved. Commercial licenses for individual templates and scripts are governed by their respective product license agreements.
+© ScriptlyStore. All rights reserved. Each product sold on the marketplace is covered by its own license, listed on [scriptly.store/licenses](https://scriptly.store/licenses).

@@ -1,91 +1,65 @@
-"use client";
-
-import { useState } from "react";
-import { ChevronDown, HelpCircle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Plus } from "lucide-react";
 
 const FAQS = [
   {
     question: "What percentage of sales do I keep?",
     answer:
-      "You keep 95% of all direct sales. Scriptly charges a transparent 5% platform fee to cover automated digital delivery, server infrastructure, and secure payment processing. If a sale comes through an approved affiliate from our network, the affiliate commission (configurable by you, typically 30%) is deducted, leaving 65% for you.",
+      "You keep 95% of all direct sales. Scriptly charges a transparent 5% platform fee to cover automated digital delivery, server infrastructure and secure payment processing. If a sale comes through an approved affiliate, the affiliate commission (set by you, typically 30%) is deducted, leaving 65% for you.",
   },
   {
     question: "How and when do I get paid?",
     answer:
-      "Payouts are processed directly to your bank account via Razorpay Route. You can configure your beneficiary bank details in your Creator Console settings.",
+      "Payouts go directly to your bank account via Razorpay Route. You can add your beneficiary bank details in your creator console settings.",
   },
   {
-    question: "Do I retain the intellectual property of my code?",
+    question: "Do I keep the intellectual property of my code?",
     answer:
-      "Yes, 100%. You retain full copyright and ownership of all your code, design assets, and documentation. You are merely granting purchasers a non-exclusive license to use your code to build their applications.",
+      "Yes, 100%. You retain full copyright and ownership of your code, design assets and documentation. Buyers receive a non-exclusive licence to use your code in their applications.",
   },
   {
     question: "What file formats can I sell on Scriptly?",
     answer:
-      "You can sell ZIP packages of complete source repositories, standalone scripts (.py, .ts, .sh), UI component assets, database schemas, prompt packs, or private GitHub repository invite access.",
+      "ZIP packages of complete source repositories, standalone scripts (.py, .ts, .sh), UI component assets, database schemas, prompt packs, or private GitHub repository invite access.",
   },
   {
     question: "Can I list free products or lead magnets?",
     answer:
-      "Yes. You can set any product price to ₹0 / Free. Free products are featured prominently across Scriptly's /free collection and help you build an audience of developers who often convert to your paid tools.",
+      "Yes. You can set any product to free. Free products are featured across Scriptly’s /free collection and help you build an audience of developers who often go on to buy your paid tools.",
   },
   {
-    question: "What kind of support am I expected to provide to buyers?",
+    question: "What support am I expected to give buyers?",
     answer:
-      "Scriptly products are sold as developer assets. You are expected to provide code that works as described in your README. You are not obligated to build custom client features or act as an on-call consultant.",
+      "Scriptly products are sold as developer assets. Your code should work as described in your README. You aren’t obliged to build custom features or act as an on-call consultant.",
   },
 ];
 
 export default function CreatorFAQ() {
-  const [openIndex, setOpenIndex] = useState<number | null>(0);
-
-  const toggle = (idx: number) => {
-    setOpenIndex(openIndex === idx ? null : idx);
-  };
-
   return (
-    <section className="py-16 md:py-24 border-b border-border/30">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 space-y-10">
-        <div className="text-center space-y-3">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-black uppercase tracking-wider">
-            <HelpCircle className="w-3.5 h-3.5" /> Frequently Asked Questions
-          </span>
-          <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-foreground">
-            Everything you need to know
+    <section className="border-b border-border">
+      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 py-16 sm:px-6 md:py-24 lg:grid-cols-12 lg:gap-16 lg:px-8">
+        <div className="lg:col-span-4">
+          <h2 className="font-display text-3xl leading-tight tracking-[-0.02em] text-balance text-foreground md:text-4xl">
+            Questions creators ask
           </h2>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Straightforward answers for engineers looking to monetize their software.
+          <p className="mt-4 text-base leading-relaxed text-muted-foreground">
+            Straight answers for engineers looking to earn from their software.
           </p>
         </div>
 
-        {/* Minimal Hairline Divider FAQ Accordion */}
-        <div className="divide-y divide-border/40 border-y border-border/40">
-          {FAQS.map((faq, idx) => {
-            const isOpen = openIndex === idx;
-            return (
-              <div key={idx} className="transition-colors">
-                <button
-                  onClick={() => toggle(idx)}
-                  className="w-full py-4 text-left flex items-center justify-between gap-4 font-bold text-sm text-foreground hover:text-primary transition-colors cursor-pointer"
-                >
-                  <span>{faq.question}</span>
-                  <ChevronDown
-                    className={cn(
-                      "w-4 h-4 shrink-0 text-muted-foreground transition-transform duration-200",
-                      isOpen && "rotate-180 text-primary"
-                    )}
-                  />
-                </button>
-
-                {isOpen && (
-                  <div className="pb-4 pt-1 text-xs text-muted-foreground leading-relaxed">
-                    {faq.answer}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="divide-y divide-border border-y border-border lg:col-span-8">
+          {FAQS.map((faq, idx) => (
+            <details key={faq.question} open={idx === 0} className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-5 text-left text-base font-medium text-foreground transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+                {faq.question}
+                <Plus
+                  aria-hidden
+                  className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out group-open:rotate-45 motion-reduce:transition-none"
+                  strokeWidth={1.75}
+                />
+              </summary>
+              <p className="max-w-[68ch] pb-5 text-sm leading-relaxed text-muted-foreground">{faq.answer}</p>
+            </details>
+          ))}
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 # ScriptlyHQ — Coding Agent Guidelines & Architecture Rules
 
-This document outlines mandatory architectural patterns, security requirements, database standards, and coding conventions for AI agents and human contributors working inside the `SH20RAJ/scriptlyhq` codebase.
+This document outlines mandatory architectural patterns, security requirements, database standards, and coding conventions for AI agents and human contributors working inside the `playlikeboy/scriptly.store` codebase.
 
 ---
 
@@ -8,13 +8,13 @@ This document outlines mandatory architectural patterns, security requirements, 
 
 | Component | Technology | Canonical Entrypoint |
 |---|---|---|
-| **Runtime & Bundler** | Next.js 16+ (Turbopack, App Router) | [package.json](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/package.json) |
-| **Edge Deployment** | OpenNext Cloudflare Worker | [open-next.config.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/open-next.config.ts), [wrangler.jsonc](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/wrangler.jsonc) |
-| **Database ORM** | Drizzle ORM | [schema.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/db/schema.ts), [index.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/db/index.ts) |
+| **Runtime & Bundler** | Next.js 16+ (Turbopack, App Router) | [package.json](package.json) |
+| **Edge Deployment** | OpenNext Cloudflare Worker | [open-next.config.ts](open-next.config.ts), [wrangler.jsonc](wrangler.jsonc) |
+| **Database ORM** | Drizzle ORM | [schema.ts](src/db/schema.ts), [index.ts](src/db/index.ts) |
 | **Database Instance** | Neon Serverless PostgreSQL | `DATABASE_URL` (.env / .dev.vars) |
-| **Authentication** | Hexclave User Infrastructure (`@hexclave/next`) | [hexclave.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/hexclave.ts), [auth-utils.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/auth-utils.ts) |
-| **Payments** | Razorpay Global Checkout & Webhooks | [orders.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/actions/orders.ts), [link-encoder.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/payments/link-encoder.ts) |
-| **UI Styling** | Tailwind CSS + Duolingo Minimal Design System | [globals.css](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/app/globals.css), [skeleton.tsx](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/components/ui/skeleton.tsx) |
+| **Authentication** | Hexclave User Infrastructure (`@hexclave/next`) | [hexclave.ts](src/lib/hexclave.ts), [auth-utils.ts](src/lib/auth-utils.ts) |
+| **Payments** | Razorpay Global Checkout & Webhooks | [orders.ts](src/lib/actions/orders.ts), [link-encoder.ts](src/lib/payments/link-encoder.ts) |
+| **UI Styling** | Tailwind CSS v4 + "Paper & Ember" design system ([DESIGN.md](DESIGN.md)) | [globals.css](src/app/globals.css), [skeleton.tsx](src/components/ui/skeleton.tsx) |
 
 ---
 
@@ -42,20 +42,13 @@ This document outlines mandatory architectural patterns, security requirements, 
   - `/explore/[category]/[subcategory]` (Targeted subcategory directory)
 
 ### Rule 2: Currency & Pricing Standardization
-- All user-facing prices are standardized in **Indian Rupee (₹ / INR)**.
-- Monetary values are stored in the database as **integers in paise** (e.g. ₹499 is stored as `49900`).
-- Display prices using `Intl.NumberFormat`:
-  ```ts
-  export const formatINR = (amountInRupees: number) =>
-    new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 0,
-    }).format(amountInRupees);
-  ```
+- **Catalog currency is USD.** Product prices, order amounts, coupons, payouts and affiliate commissions are stored as **integer US cents** (e.g. $29 is stored as `2900`). The switch lives in `CHECKOUT_CURRENCY.catalogCurrency` in [pricing.ts](src/config/pricing.ts).
+- **Razorpay charges INR.** `createRazorpayOrderAction` in [orders.ts](src/lib/actions/orders.ts) converts the catalog amount to INR paise using the live USD→INR rate (fallback `95`). Razorpay Route transfers are in INR paise.
+- **Display** every catalog amount with `formatPrice(cents)` (shows "Free" for 0) or `formatMoney(cents)` from [price-utils.ts](src/lib/price-utils.ts). Never hand-format with `toFixed` or hardcode `$`/`₹`.
+- **Payment links are the exception.** `/pay` links and `payment_links` rows are real INR paise; format them with `formatPaiseToINR`.
 
 ### Rule 3: Authentication & Protected User Sessions
-- Use [auth-utils.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/auth-utils.ts) for retrieving database users:
+- Use [auth-utils.ts](src/lib/auth-utils.ts) for retrieving database users:
   - `getOrCreateDbUser()`: Verifies Hexclave session and syncs or retrieves the Neon database user record.
   - `isAdmin()`: Validates whether the active session user email matches `ADMIN_EMAILS`.
 - Client-side auth UI is powered by `@hexclave/next`: `<UserButton />`, `useUser()`.
@@ -69,15 +62,16 @@ This document outlines mandatory architectural patterns, security requirements, 
 
 ### Rule 5: Dynamic & Key-Encrypted Payment Links
 - Public dynamic checkout: `/pay`
-- Token encoder: [link-encoder.ts](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/lib/payments/link-encoder.ts)
+- Token encoder: [link-encoder.ts](src/lib/payments/link-encoder.ts)
   - Supports URL-safe Base64 JSON schema (`title`, `price`, `redirectUrl`, `description`, `currency`, `sig`).
   - Supports optional 256-bit AES-GCM symmetric key encryption (`k1.<iv>.<tag>.<ciphertext>`).
-  - When accessing encrypted links without a key in query params, `/pay` presents [KeyUnlockCard.tsx](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/components/pay/KeyUnlockCard.tsx).
+  - When accessing encrypted links without a key in query params, `/pay` presents [KeyUnlockCard.tsx](src/components/pay/KeyUnlockCard.tsx).
   - Pre-unlocked links can pass `&key=YOUR_KEY` to bypass the prompt.
 
-### Rule 6: Minimal, Cohesive UI & Centralized Skeletons
-- UI should follow a **clean, minimal, premium Duolingo aesthetic**: friendly typography, 1px subtle borders (`border-border/40`), tactile action buttons with 3px/4px press shadows, and zero boxy nested borders.
-- Every route with server-side data loading must have a dedicated `loading.tsx` powered by [skeleton.tsx](file:///Users/shaswatraj/Desktop/earn/scriptlyhq/src/components/ui/skeleton.tsx) with token classes: `bg-muted/40 dark:bg-muted/30`.
+### Rule 6: "Paper & Ember" Design System & Centralized Skeletons
+- [DESIGN.md](DESIGN.md) is the visual source of truth: warm paper neutrals, ink default buttons, a single ember accent (`--primary`) reserved for purchase CTAs, links and focus; Geist sans, Newsreader serif display (`.font-display`), Geist Mono only for code/IDs.
+- Never reintroduce the retired Duolingo look: no `border-b-4` press shadows, hard offset shadows, glassmorphism, gradient text, eyebrow labels, emoji icons, or hardcoded Tailwind palette colors.
+- Every route with server-side data loading must have a dedicated `loading.tsx` powered by [skeleton.tsx](src/components/ui/skeleton.tsx).
 
 ### Rule 7: Cloudflare Deployment & OpenNext
 - Production builds run via `@opennextjs/cloudflare`.

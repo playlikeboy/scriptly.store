@@ -1,6 +1,5 @@
 import { Metadata } from "next";
-import { isAdmin } from "@/lib/auth-utils";
-import { redirect } from "next/navigation";
+import { requireAdminPage } from "@/app/admin/_components/require-admin";
 import {
   getAdminPaymentLinksAction,
   getPaymentLinkActivitiesAction,
@@ -15,24 +14,21 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminPaymentLinksPage() {
-  const authorized = await isAdmin();
-  if (!authorized) {
-    redirect("/");
-  }
+  await requireAdminPage();
 
-  const [links, activities, analytics] = await Promise.all([
+  const [links, activities, analytics, headersList] = await Promise.all([
     getAdminPaymentLinksAction(),
     getPaymentLinkActivitiesAction(100),
     getSeparatePaymentAnalyticsAction(),
+    headers(),
   ]);
 
-  const headersList = await headers();
   const host = headersList.get("host") || "scriptly.store";
   const protocol = host.includes("localhost") ? "http" : "https";
   const origin = `${protocol}://${host}`;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="space-y-6">
       <AdminPaymentLinksManager
         initialLinks={links}
         initialActivities={activities}

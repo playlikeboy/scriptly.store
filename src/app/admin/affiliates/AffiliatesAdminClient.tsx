@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Check, CheckCircle2, Loader2, UserPlus, Wallet, X } from "lucide-react";
+import { toast } from "sonner";
 import { updateAffiliateStatusAction, payoutAffiliateCommissionAction } from "@/lib/actions/affiliates";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ShieldCheck, Users, HelpCircle, Check, X, Loader2, Coins } from "lucide-react";
-import { toast } from "sonner";
+import { AdminEmptyState } from "@/app/admin/_components/admin-ui";
+import { formatMoney } from "@/lib/price-utils";
 
 interface AffiliateProfile {
   id: string;
@@ -29,6 +29,8 @@ interface PendingCommission {
   productTitle: string;
 }
 
+const dateFormat = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
 export default function AffiliatesAdminClient({
   pendingProfiles,
   pendingCommissions,
@@ -36,190 +38,141 @@ export default function AffiliatesAdminClient({
   pendingProfiles: AffiliateProfile[];
   pendingCommissions: PendingCommission[];
 }) {
-  const [isPending, startTransition] = useTransition();
-  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+  const [processing, setProcessing] = useState<{ id: string; action: "approved" | "rejected" | "payout" } | null>(null);
 
-  const handleStatusUpdate = (userId: string, status: "approved" | "rejected") => {
-    setProcessingId(userId);
+  const handleStatusUpdate = (profile: AffiliateProfile, status: "approved" | "rejected") => {
+    if (status === "rejected" && !window.confirm(`Reject the affiliate application from ${profile.userName || profile.userEmail}?`)) return;
+    setProcessing({ id: profile.id, action: status });
     startTransition(async () => {
       try {
-        const res = await updateAffiliateStatusAction({ userId, status });
-        if (res.success) {
-          toast.success(`Application ${status} successfully!`);
-        }
-      } catch (err: any) {
-        toast.error(err.message || "Failed to update application.");
+        const res = await updateAffiliateStatusAction({ userId: profile.id, status });
+        if (res.success) toast.success(status === "approved" ? "Application approved" : "Application rejected");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not update the application.");
       } finally {
-        setProcessingId(null);
+        setProcessing(null);
       }
     });
   };
 
-  const handlePayout = (commissionId: string) => {
-    setProcessingId(commissionId);
+  const handlePayout = (commission: PendingCommission) => {
+    if (!window.confirm(`Mark ${formatMoney(commission.amount)} as paid to ${commission.affiliateName || commission.affiliateEmail}?`)) return;
+    setProcessing({ id: commission.id, action: "payout" });
     startTransition(async () => {
       try {
-        const res = await payoutAffiliateCommissionAction(commissionId);
-        if (res.success) {
-          toast.success("Affiliate payout processed!");
-        }
-      } catch (err: any) {
-        toast.error(err.message || "Failed to process payout.");
+        const res = await payoutAffiliateCommissionAction(commission.id);
+        if (res.success) toast.success("Commission marked as paid");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not process the payout.");
       } finally {
-        setProcessingId(null);
+        setProcessing(null);
       }
     });
   };
+
+  const locked = processing !== null;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-foreground flex items-center gap-2">
-            Affiliate Management
-            <Badge className="bg-primary/10 text-primary border-primary/20 text-[9px] uppercase tracking-wider h-5 font-black">
-              Admin Control
-            </Badge>
-          </h1>
-          <p className="text-xs text-muted-foreground font-medium mt-1">
-            Review pending applications, audit affiliate links, and process manual commission payouts.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        {/* Left: Pending Applications */}
-        <div className="space-y-4">
-          <h3 className="text-xs font-black uppercase tracking-widest text-foreground flex items-center gap-2">
-            <Users className="w-4 h-4 text-blue-400" />
-            Pending Applications ({pendingProfiles.length})
-          </h3>
-
-          <div className="space-y-4">
-            {pendingProfiles.length === 0 ? (
-              <Card className="border border-border/40 bg-card/35 p-6 rounded-2xl text-center text-xs text-muted-foreground font-semibold">
-                No pending affiliate applications.
-              </Card>
-            ) : (
-              pendingProfiles.map((prof) => (
-                <Card key={prof.id} className="border border-border/40 bg-card/35 rounded-2xl shadow-sm overflow-hidden">
-                  <CardContent className="p-5 space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-1">
-                        <h4 className="text-sm font-black text-foreground">{prof.userName || "Unnamed User"}</h4>
-                        <p className="text-[10px] text-muted-foreground font-semibold">{prof.userEmail}</p>
-                        <Badge className="bg-muted text-primary border-border/40 text-[9px] font-mono font-bold mt-1">
-                          Handle: {prof.affiliateSlug}
-                        </Badge>
-                      </div>
-                      <span className="text-[9px] text-muted-foreground font-semibold">
-                        {new Date(prof.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-
-                    <div className="p-3 bg-muted/30 border border-border/20 rounded-xl space-y-1.5">
-                      <span className="text-[8px] font-black uppercase tracking-widest text-muted-foreground">Promotional Channels</span>
-                      <p className="text-[10px] text-foreground leading-relaxed whitespace-pre-wrap">
-                        {prof.channels || "No details provided."}
-                      </p>
-                    </div>
-
-                    <div className="flex gap-2 pt-2">
-                      <Button
-                        size="sm"
-                        disabled={isPending && processingId === prof.id}
-                        onClick={() => handleStatusUpdate(prof.id, "approved")}
-                        className="flex-1 rounded-xl h-9 bg-emerald-500 text-white hover:bg-emerald-500/90 font-black uppercase tracking-wider text-[9px] cursor-pointer"
-                      >
-                        {isPending && processingId === prof.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <>
-                            <Check className="w-3.5 h-3.5 mr-1" />
-                            Approve Partner
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={isPending && processingId === prof.id}
-                        onClick={() => handleStatusUpdate(prof.id, "rejected")}
-                        className="rounded-xl h-9 font-black uppercase tracking-wider text-[9px] cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
+    <div className="grid items-start gap-6 lg:grid-cols-2">
+      <section aria-labelledby="affiliate-applications" className="min-w-0 overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+          <h2 id="affiliate-applications" className="text-sm font-semibold text-foreground">
+            Pending applications
+          </h2>
+          <span className="text-xs text-muted-foreground tabular-nums">{pendingProfiles.length}</span>
         </div>
 
-        {/* Right: Pending Settlements */}
-        <div className="space-y-4">
-          <h3 className="text-xs font-black uppercase tracking-widest text-foreground flex items-center gap-2">
-            <Coins className="w-4 h-4 text-purple-400" />
-            Pending Settlements ({pendingCommissions.length})
-          </h3>
-
-          <div className="space-y-4">
-            {pendingCommissions.length === 0 ? (
-              <Card className="border border-border/40 bg-card/35 p-6 rounded-2xl text-center text-xs text-muted-foreground font-semibold">
-                No pending manual affiliate settlements.
-              </Card>
-            ) : (
-              pendingCommissions.map((comm) => (
-                <Card key={comm.id} className="border border-border/40 bg-card/35 rounded-2xl shadow-sm overflow-hidden">
-                  <CardContent className="p-5 space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-1">
-                        <h4 className="text-xs font-black text-foreground">Referred Sale: {comm.productTitle}</h4>
-                        <p className="text-[9px] text-muted-foreground font-semibold">
-                          Affiliate: <strong className="text-foreground">{comm.affiliateName || "Partner"}</strong> ({comm.affiliateEmail})
+        {pendingProfiles.length === 0 ? (
+          <AdminEmptyState icon={UserPlus} title="No pending applications" description="New affiliate applications will appear here." />
+        ) : (
+          <ul className="divide-y divide-border">
+            {pendingProfiles.map((prof) => {
+              const busy = processing?.id === prof.id;
+              return (
+                <li key={prof.id} className="space-y-3 px-4 py-4 sm:px-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{prof.userName || "Unnamed user"}</p>
+                      <p className="truncate text-xs text-muted-foreground">{prof.userEmail}</p>
+                      {prof.affiliateSlug ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Handle <span className="font-mono text-[11px] text-foreground">{prof.affiliateSlug}</span>
                         </p>
-                        <p className="text-[9px] text-muted-foreground font-mono">
-                          Order ID: {comm.orderId.slice(0, 8)}... • Commission rate: {comm.percent}%
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-sm font-black text-primary block">
-                          ${(comm.amount / 100).toFixed(2)}
-                        </span>
-                        <span className="text-[8px] text-muted-foreground font-semibold">
-                          {new Date(comm.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
+                      ) : null}
                     </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">{dateFormat.format(new Date(prof.createdAt))}</span>
+                  </div>
 
+                  <div>
+                    <p className="text-xs text-muted-foreground">Promotional channels</p>
+                    <p className="mt-0.5 text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                      {prof.channels || "No details provided."}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={locked} onClick={() => handleStatusUpdate(prof, "approved")}>
+                      {busy && processing?.action === "approved" ? <Loader2 aria-hidden="true" className="animate-spin" /> : <Check aria-hidden="true" />}
+                      Approve
+                    </Button>
                     <Button
                       size="sm"
-                      disabled={isPending && processingId === comm.id}
-                      onClick={() => handlePayout(comm.id)}
-                      className="w-full rounded-xl h-9 bg-primary text-white hover:bg-primary/90 font-black uppercase tracking-wider text-[9px] cursor-pointer"
+                      variant="outline"
+                      disabled={locked}
+                      onClick={() => handleStatusUpdate(prof, "rejected")}
+                      className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
                     >
-                      {isPending && processingId === comm.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <ShieldCheck className="w-3.5 h-3.5 mr-1" />
-                          Release Manual Payout
-                        </>
-                      )}
+                      {busy && processing?.action === "rejected" ? <Loader2 aria-hidden="true" className="animate-spin" /> : <X aria-hidden="true" />}
+                      Reject
                     </Button>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="affiliate-settlements" className="min-w-0 overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+          <h2 id="affiliate-settlements" className="text-sm font-semibold text-foreground">
+            Pending settlements
+          </h2>
+          <span className="text-xs text-muted-foreground tabular-nums">{pendingCommissions.length}</span>
         </div>
 
-      </div>
-
+        {pendingCommissions.length === 0 ? (
+          <AdminEmptyState icon={Wallet} title="Nothing to settle" description="Pending affiliate commissions will appear here." />
+        ) : (
+          <ul className="divide-y divide-border">
+            {pendingCommissions.map((comm) => {
+              const busy = processing?.id === comm.id;
+              return (
+                <li key={comm.id} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{comm.productTitle}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {comm.affiliateName || "Partner"} · {comm.affiliateEmail}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      <span className="font-mono text-[11px]">{comm.orderId.slice(0, 8)}</span> · {comm.percent}% commission ·{" "}
+                      {dateFormat.format(new Date(comm.createdAt))}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <span className="text-sm font-medium text-foreground tabular-nums">{formatMoney(comm.amount)}</span>
+                    <Button size="sm" variant="outline" disabled={locked} onClick={() => handlePayout(comm)}>
+                      {busy ? <Loader2 aria-hidden="true" className="animate-spin" /> : <CheckCircle2 aria-hidden="true" />}
+                      Mark paid
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

@@ -1,37 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { ShoppingCart } from "lucide-react";
+import { ShoppingBag } from "lucide-react";
 import { useCart } from "@/components/CartContext";
-import { useEffect, useState } from "react";
 
 export default function CartIcon() {
+  // Cart state starts empty on both server and client, then hydrates from
+  // localStorage, so the badge never causes a hydration mismatch.
   const { cartCount } = useCart();
-  const [mounted, setMounted] = useState(false);
-
-  // Avoid hydration mismatch
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return (
-      <div className="p-2 text-muted-foreground relative">
-        <ShoppingCart className="w-5 h-5" />
-      </div>
-    );
-  }
+  const label = cartCount > 0 ? `Cart, ${cartCount} ${cartCount === 1 ? "item" : "items"}` : "Cart";
 
   return (
     <Link
       href="/cart"
-      className="relative p-2 text-muted-foreground hover:text-foreground transition-colors flex items-center"
       id="cart-nav-button"
+      aria-label={label}
+      className="relative inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <ShoppingCart className="w-5 h-5" />
+      <ShoppingBag className="size-4" strokeWidth={1.75} aria-hidden="true" />
       {cartCount > 0 && (
-        <span className="absolute -top-1 -right-1 bg-emerald-500 text-neutral-950 font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center transition-all duration-300">
-          {cartCount}
+        <span
+          aria-hidden="true"
+          className="tabular absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-medium leading-none text-background"
+        >
+          {cartCount > 99 ? "99+" : cartCount}
         </span>
       )}
     </Link>

@@ -1,35 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import {
-  FileCode2,
-  Copy,
-  Check,
-  Search,
-  Sparkles,
-  Link2,
-  Package,
-  CreditCard,
-  Store,
-  Gift,
-  ShieldCheck,
-  Terminal,
-  Code,
-  Lock,
-  ExternalLink,
-  BookOpen,
-} from "lucide-react";
+import { Check, Copy, ExternalLink, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface ProcessPrompt {
   id: string;
   title: string;
   category: string;
-  icon: any;
   summary: string;
   systemPrompt: string;
   schemaExample: string;
@@ -42,7 +23,6 @@ const PROCESS_PROMPTS: ProcessPrompt[] = [
     id: "payment-links",
     title: "Dynamic & Encrypted Payment Links Engine",
     category: "Payments & Commerce",
-    icon: Link2,
     summary:
       "Generate zero-setup, tamper-proof payment links with guaranteed post-payment redirection. Supports URL-safe Base64 encoding, optional 256-bit AES key encryption, and REST API creation.",
     systemPrompt: `You are an expert developer commerce agent integrating ScriptlyStore's open payment links engine.
@@ -118,7 +98,6 @@ export function createPaymentUrl(params: {
     id: "product-publishing",
     title: "Product Packaging & Marketplace Publishing",
     category: "Inventory & Catalog",
-    icon: Package,
     summary:
       "Automate digital product packaging, private ZIP archive placement under /uploads, database metadata indexing, and category/subcategory classification.",
     systemPrompt: `You are the ScriptlyStore Product Lifecycle & Asset Packaging Agent.
@@ -190,7 +169,6 @@ export async function publishProduct(data: {
     id: "razorpay-webhooks",
     title: "Razorpay Signature Verification & Webhook Handling",
     category: "Payments & Commerce",
-    icon: CreditCard,
     summary:
       "Authenticate payment callbacks, compute HMAC SHA-256 order signatures, fulfill orders, generate digital receipts, and trigger automated redirections.",
     systemPrompt: `You are the Razorpay Payment Verification & Fulfillment Agent for ScriptlyStore.
@@ -243,7 +221,6 @@ export function verifyRazorpaySignature(
     id: "creator-payouts",
     title: "Creator Storefronts & 95/5 Commission Split",
     category: "Creators & Revenue",
-    icon: Store,
     summary:
       "Enforce ScriptlyStore's developer-first 95% revenue share model. Calculate ledger balances, manage payouts, and power custom creator storefronts.",
     systemPrompt: `You are the ScriptlyStore Creator Revenue & Split Architecture Agent.
@@ -288,7 +265,6 @@ BUSINESS LOGIC:
     id: "coupons-discounts",
     title: "Discount Engine & Coupon Campaigns",
     category: "Marketing & Growth",
-    icon: Gift,
     summary:
       "Validate and apply percent or flat INR discounts, calculate cart deductions, enforce redemption limits, and manage campaign schedules.",
     systemPrompt: `You are the ScriptlyStore Discount & Promotions Engine Agent.
@@ -338,7 +314,6 @@ RULES:
     id: "customer-support-downloads",
     title: "Secure Downloads & Protected Digital Asset Delivery",
     category: "Support & Security",
-    icon: ShieldCheck,
     summary:
       "Handle customer digital fulfillment, stream private assets via /api/download/[productId], verify user ownership, and resolve download disputes.",
     systemPrompt: `You are the ScriptlyStore Digital Asset Delivery & Customer Support Agent.
@@ -400,251 +375,217 @@ export async function handleProtectedDownload(userId: string, productId: string)
   },
 ];
 
+
+type CopyTarget = { key: string; text: string; label: string };
+
+function CopyButton({
+  target,
+  copiedKey,
+  onCopy,
+  variant = "ghost",
+  children,
+}: {
+  target: CopyTarget;
+  copiedKey: string | null;
+  onCopy: (target: CopyTarget) => void;
+  variant?: "ghost" | "default";
+  children?: React.ReactNode;
+}) {
+  const copied = copiedKey === target.key;
+  return (
+    <Button type="button" size="sm" variant={variant} onClick={() => onCopy(target)} aria-live="polite">
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      {copied ? "Copied" : children ?? "Copy"}
+    </Button>
+  );
+}
+
+const codeBlock =
+  "max-h-[60vh] overflow-auto rounded-xl bg-secondary p-4 font-mono text-xs leading-relaxed text-foreground sm:p-5";
+
 export default function PromptsManagerClient() {
   const [activeProcessId, setActiveProcessId] = useState<string>("payment-links");
   const [searchQuery, setSearchQuery] = useState("");
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const filteredProcesses = PROCESS_PROMPTS.filter(
-    (p) =>
-      p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const query = searchQuery.trim().toLowerCase();
+  const filteredProcesses = query
+    ? PROCESS_PROMPTS.filter(
+        (p) =>
+          p.title.toLowerCase().includes(query) ||
+          p.summary.toLowerCase().includes(query) ||
+          p.category.toLowerCase().includes(query)
+      )
+    : PROCESS_PROMPTS;
 
-  const activeProcess =
-    PROCESS_PROMPTS.find((p) => p.id === activeProcessId) || PROCESS_PROMPTS[0];
+  const activeProcess = PROCESS_PROMPTS.find((p) => p.id === activeProcessId) || PROCESS_PROMPTS[0];
 
-  const handleCopy = (text: string, id: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    toast.success(`${label} copied to clipboard!`);
-    setTimeout(() => setCopiedId(null), 2000);
+  const handleCopy = ({ key, text, label }: CopyTarget) => {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedKey(key);
+        toast.success(`${label} copied`);
+        window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 2000);
+      })
+      .catch(() => toast.error("Clipboard is unavailable in this browser."));
   };
 
   return (
-    <div className="space-y-8 max-w-6xl">
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-6">
-        <div>
-          <div className="flex items-center gap-2 text-amber-500 font-black uppercase text-xs tracking-wider mb-1">
-            <FileCode2 className="w-4 h-4" /> AI Operations & Architecture
-          </div>
-          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-foreground">
-            Process Prompt Docs & System Specifications
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Production-ready prompts, JSON schemas, and code implementations for each ScriptlyStore process.
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0 max-w-2xl">
+          <h1 className="font-display text-3xl text-balance text-foreground md:text-4xl">Process prompt docs</h1>
+          <p className="mt-2 text-sm text-pretty text-muted-foreground">
+            Production-ready prompts, JSON schemas and code implementations for each ScriptlyStore process.
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <Button asChild variant="outline" size="sm" className="rounded-xl text-xs font-bold border-border/60">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
             <a href="/docs/api/payment-links" target="_blank" rel="noreferrer">
-              Public API Docs <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+              Public API docs
+              <ExternalLink aria-hidden="true" />
             </a>
           </Button>
-          <Button asChild size="sm" className="bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-[0_3px_0_#46A302]">
-            <a href="/admin/payment-links">Payment Links Tool</a>
+          <Button asChild variant="secondary">
+            <a href="/admin/payment-links">Payment links tool</a>
           </Button>
         </div>
-      </div>
+      </header>
 
-      {/* Search & Process Selector Grid */}
-      <div className="space-y-4">
-        <div className="relative w-full max-w-md">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search processes or prompts..."
-            className="pl-9 h-10 rounded-xl text-xs bg-card/40 border-border/50"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          {filteredProcesses.map((proc) => {
-            const Icon = proc.icon;
-            const isActive = proc.id === activeProcess.id;
-            return (
-              <button
-                key={proc.id}
-                onClick={() => setActiveProcessId(proc.id)}
-                className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between space-y-2 ${
-                  isActive
-                    ? "border-[#58CC02] bg-[#58CC02]/10 shadow-sm"
-                    : "border-border/40 bg-card/30 hover:border-border/80 hover:bg-card/60"
-                }`}
-              >
-                <div className="w-8 h-8 rounded-xl bg-card border border-border/50 flex items-center justify-center text-foreground">
-                  <Icon className={`w-4 h-4 ${isActive ? "text-[#58CC02]" : "text-muted-foreground"}`} />
-                </div>
-                <div>
-                  <p className="font-black text-xs text-foreground line-clamp-1">{proc.title}</p>
-                  <p className="text-[10px] text-muted-foreground line-clamp-1">{proc.category}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Active Process Workspace */}
-      <div className="rounded-3xl border border-border/50 bg-card/35 backdrop-blur-xl p-6 sm:p-8 space-y-8 shadow-sm">
-        {/* Header of Active Process */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/30 pb-6">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary border-primary/20">
-                {activeProcess.category}
-              </Badge>
-              <span className="text-xs font-mono text-muted-foreground">id: {activeProcess.id}</span>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black text-foreground">{activeProcess.title}</h2>
-            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              {activeProcess.summary}
-            </p>
+      <div className="grid items-start gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+        {/* Process index */}
+        <aside className="min-w-0 space-y-3 lg:sticky lg:top-20">
+          <div className="relative">
+            <label htmlFor="prompt-search" className="sr-only">
+              Search processes
+            </label>
+            <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              id="prompt-search"
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search processes"
+              className="h-10 w-full rounded-[10px] border border-input bg-card pr-3 pl-9 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+            />
           </div>
 
-          <Button
-            onClick={() =>
-              handleCopy(
-                activeProcess.systemPrompt,
-                `prompt-${activeProcess.id}`,
-                "System Prompt"
-              )
-            }
-            className="bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-[0_3px_0_#46A302] active:translate-y-px active:shadow-none shrink-0"
-          >
-            {copiedId === `prompt-${activeProcess.id}` ? (
-              <>
-                <Check className="w-3.5 h-3.5 mr-1.5" /> Copied Prompt
-              </>
+          <nav aria-label="Processes" className="overflow-hidden rounded-2xl border border-border bg-card">
+            {filteredProcesses.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">No process matches “{searchQuery}”.</p>
             ) : (
-              <>
-                <Copy className="w-3.5 h-3.5 mr-1.5" /> Copy Agent Prompt
-              </>
+              <ul className="divide-y divide-border">
+                {filteredProcesses.map((proc) => {
+                  const isActive = proc.id === activeProcess.id;
+                  return (
+                    <li key={proc.id}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveProcessId(proc.id)}
+                        aria-current={isActive ? "true" : undefined}
+                        className={cn(
+                          "block w-full px-4 py-3 text-left transition-colors outline-none focus-visible:bg-secondary",
+                          isActive ? "bg-secondary" : "hover:bg-secondary/50"
+                        )}
+                      >
+                        <span className={cn("block text-sm leading-snug", isActive ? "font-medium text-foreground" : "text-foreground")}>
+                          {proc.title}
+                        </span>
+                        <span className={cn("mt-0.5 block text-xs", isActive ? "text-primary" : "text-muted-foreground")}>
+                          {proc.category}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
-          </Button>
-        </div>
+          </nav>
+        </aside>
 
-        {/* Workspace Tabs */}
-        <Tabs defaultValue="prompt" className="w-full">
-          <TabsList className="bg-muted/40 p-1 rounded-xl border border-border/50 mb-6">
-            <TabsTrigger value="prompt" className="rounded-lg text-xs font-bold gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" /> System Prompt (for AI)
-            </TabsTrigger>
-            <TabsTrigger value="schema" className="rounded-lg text-xs font-bold gap-1.5">
-              <Code className="w-3.5 h-3.5 text-sky-500" /> JSON Schema Specification
-            </TabsTrigger>
-            <TabsTrigger value="code" className="rounded-lg text-xs font-bold gap-1.5">
-              <Terminal className="w-3.5 h-3.5 text-emerald-500" /> Implementation Code
-            </TabsTrigger>
-            <TabsTrigger value="edge-cases" className="rounded-lg text-xs font-bold gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-500" /> Edge Cases & Guardrails
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Tab 1: System Prompt */}
-          <TabsContent value="prompt" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                AI Coding Agent Instructions (Drop into Claude, Antigravity, or GPT)
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  handleCopy(
-                    activeProcess.systemPrompt,
-                    `prompt-inner-${activeProcess.id}`,
-                    "Prompt"
-                  )
-                }
-                className="text-xs font-bold"
-              >
-                {copiedId === `prompt-inner-${activeProcess.id}` ? "Copied" : "Copy"}
-              </Button>
+        {/* Active process */}
+        <article aria-labelledby="active-process-title" className="min-w-0 rounded-2xl border border-border bg-card">
+          <div className="flex flex-col gap-4 border-b border-border p-4 sm:flex-row sm:items-start sm:justify-between sm:p-6">
+            <div className="min-w-0 space-y-1.5">
+              <p className="text-xs text-muted-foreground">
+                {activeProcess.category} · <span className="font-mono text-[11px]">{activeProcess.id}</span>
+              </p>
+              <h2 id="active-process-title" className="text-xl font-semibold tracking-tight text-balance text-foreground">
+                {activeProcess.title}
+              </h2>
+              <p className="max-w-[68ch] text-sm leading-relaxed text-muted-foreground">{activeProcess.summary}</p>
             </div>
-            <pre className="p-5 rounded-2xl bg-background/90 border border-border/50 font-mono text-xs text-foreground whitespace-pre-wrap leading-relaxed select-all">
-              {activeProcess.systemPrompt}
-            </pre>
-          </TabsContent>
-
-          {/* Tab 2: JSON Schema */}
-          <TabsContent value="schema" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                Payload / Contract Data Structure
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  handleCopy(
-                    activeProcess.schemaExample,
-                    `schema-${activeProcess.id}`,
-                    "Schema"
-                  )
-                }
-                className="text-xs font-bold"
+            <div className="shrink-0">
+              <CopyButton
+                variant="default"
+                target={{ key: `prompt-${activeProcess.id}`, text: activeProcess.systemPrompt, label: "System prompt" }}
+                copiedKey={copiedKey}
+                onCopy={handleCopy}
               >
-                {copiedId === `schema-${activeProcess.id}` ? "Copied" : "Copy"}
-              </Button>
+                Copy agent prompt
+              </CopyButton>
             </div>
-            <pre className="p-5 rounded-2xl bg-background/90 border border-border/50 font-mono text-xs text-foreground overflow-x-auto leading-relaxed select-all">
-              {activeProcess.schemaExample}
-            </pre>
-          </TabsContent>
+          </div>
 
-          {/* Tab 3: Implementation Code */}
-          <TabsContent value="code" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                Production Reference Code (TypeScript / Node.js)
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  handleCopy(
-                    activeProcess.implementationCode,
-                    `code-${activeProcess.id}`,
-                    "Code snippet"
-                  )
-                }
-                className="text-xs font-bold"
-              >
-                {copiedId === `code-${activeProcess.id}` ? "Copied" : "Copy"}
-              </Button>
+          <Tabs key={activeProcess.id} defaultValue="prompt" className="p-4 sm:p-6">
+            <div className="-mx-1 overflow-x-auto px-1 scrollbar-none">
+              <TabsList className="mb-4">
+                <TabsTrigger value="prompt">System prompt</TabsTrigger>
+                <TabsTrigger value="schema">JSON schema</TabsTrigger>
+                <TabsTrigger value="code">Implementation</TabsTrigger>
+                <TabsTrigger value="edge-cases">Edge cases</TabsTrigger>
+              </TabsList>
             </div>
-            <pre className="p-5 rounded-2xl bg-background/90 border border-border/50 font-mono text-xs text-foreground overflow-x-auto leading-relaxed select-all">
-              {activeProcess.implementationCode}
-            </pre>
-          </TabsContent>
 
-          {/* Tab 4: Edge Cases */}
-          <TabsContent value="edge-cases" className="space-y-4">
-            <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-              Critical Guardrails & Production Edge Cases
-            </span>
-            <div className="grid grid-cols-1 gap-3">
-              {activeProcess.keyEdgeCases.map((edgeCase, i) => (
-                <div
-                  key={i}
-                  className="p-4 rounded-xl bg-muted/20 border border-border/40 flex items-start gap-3"
-                >
-                  <div className="w-5 h-5 rounded-md bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    !
-                  </div>
-                  <p className="text-xs text-foreground leading-relaxed font-medium">
+            <TabsContent value="prompt" className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Instructions for an AI coding agent (Claude, Antigravity or GPT).</p>
+                <CopyButton
+                  target={{ key: `prompt-inner-${activeProcess.id}`, text: activeProcess.systemPrompt, label: "Prompt" }}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              </div>
+              <pre className={cn(codeBlock, "whitespace-pre-wrap")}>{activeProcess.systemPrompt}</pre>
+            </TabsContent>
+
+            <TabsContent value="schema" className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Payload and contract data structure.</p>
+                <CopyButton
+                  target={{ key: `schema-${activeProcess.id}`, text: activeProcess.schemaExample, label: "Schema" }}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              </div>
+              <pre className={codeBlock}>{activeProcess.schemaExample}</pre>
+            </TabsContent>
+
+            <TabsContent value="code" className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Production reference code (TypeScript / Node.js).</p>
+                <CopyButton
+                  target={{ key: `code-${activeProcess.id}`, text: activeProcess.implementationCode, label: "Code snippet" }}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              </div>
+              <pre className={codeBlock}>{activeProcess.implementationCode}</pre>
+            </TabsContent>
+
+            <TabsContent value="edge-cases" className="space-y-3">
+              <p className="text-sm text-muted-foreground">Critical guardrails and production edge cases.</p>
+              <ul className="divide-y divide-border rounded-xl border border-border">
+                {activeProcess.keyEdgeCases.map((edgeCase) => (
+                  <li key={edgeCase} className="px-4 py-3 text-sm leading-relaxed text-foreground">
                     {edgeCase}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </TabsContent>
-        </Tabs>
+                  </li>
+                ))}
+              </ul>
+            </TabsContent>
+          </Tabs>
+        </article>
       </div>
     </div>
   );

@@ -6,12 +6,12 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Download, ShoppingBag, CreditCard, ExternalLink, Calendar, FileText, ArrowRight, ShieldCheck, Sparkles, Layers } from "lucide-react";
+import Image from "next/image";
+import { Download, FileText, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ProductPagination } from "@/components/ProductPagination";
 import { Metadata } from "next";
-import { CyberBackground } from "@/components/ui/CyberBackground";
+import { formatMoney } from "@/lib/price-utils";
 
 interface PageProps {
   searchParams: Promise<{
@@ -23,15 +23,16 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Customer Inventory | ScriptlyStore",
     description: "Access your purchased scripts, license keys, and digital receipts on ScriptlyStore.",
+    robots: { index: false, follow: false },
   };
 }
 
-const formatINR = (amount: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(amount);
+const PAGE_SIZE = 8;
+
+const formatDate = (value: Date | string) =>
+  new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+const formatAmount = (paise: number) => (paise <= 0 ? "Free" : formatMoney(paise));
 
 export default async function DashboardPage({ searchParams }: PageProps) {
   const user = await getOrCreateDbUser();
@@ -40,25 +41,22 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   }
 
   const resolvedParams = await searchParams;
-  const currentPage = Math.max(1, parseInt(resolvedParams.page || "1", 10));
-  const limit = 8;
-  const offset = (currentPage - 1) * limit;
+  const parsedPage = parseInt(resolvedParams.page || "1", 10);
+  const currentPage = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
+  const offset = (currentPage - 1) * PAGE_SIZE;
 
-  // Query total count of completed orders and total invested amount in a single fast query
-  const [statsResult] = await db
-    .select({
-      count: sql<number>`count(*)`,
-      sum: sql<number>`coalesce(sum(${orders.amount}), 0)`,
-    })
-    .from(orders)
-    .where(and(eq(orders.userId, user.id), eq(orders.status, "completed")));
+  const ownedCompleted = and(eq(orders.userId, user.id), eq(orders.status, "completed"));
 
-  const totalCount = Number(statsResult?.count || 0);
-  const totalInvested = Number(statsResult?.sum || 0);
-  const totalPages = Math.ceil(totalCount / limit);
+  // Stats, ledger and the current library page are independent: run them together.
+  const [[statsResult], billingHistory, purchasedItems] = await Promise.all([
+    db
+      .select({
+        count: sql<number>`count(*)`,
+        sum: sql<number>`coalesce(sum(${orders.amount}), 0)`,
+      })
+      .from(orders)
+      .where(ownedCompleted),
 
-  // Scalable queries: Query recent billing records with strict limit
-  const [billingHistory, purchasedItems] = await Promise.all([
     db
       .select({
         orderId: orders.id,
@@ -68,7 +66,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       })
       .from(orders)
       .innerJoin(products, eq(orders.productId, products.id))
-      .where(and(eq(orders.userId, user.id), eq(orders.status, "completed")))
+      .where(ownedCompleted)
       .orderBy(desc(orders.createdAt))
       .limit(10),
 
@@ -91,244 +89,209 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       })
       .from(orders)
       .innerJoin(products, eq(orders.productId, products.id))
-      .where(and(eq(orders.userId, user.id), eq(orders.status, "completed")))
+      .where(ownedCompleted)
       .orderBy(desc(orders.createdAt))
-      .limit(limit)
+      .limit(PAGE_SIZE)
       .offset(offset),
   ]);
 
+  const totalCount = Number(statsResult?.count || 0);
+  const totalInvested = Number(statsResult?.sum || 0);
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
   return (
-    <div className="flex flex-col min-h-screen text-foreground bg-background relative overflow-hidden">
-      <CyberBackground />
-
-      <div className="container max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-14 space-y-8 relative z-10">
-        {/* Customer Header */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-border/40 pb-6">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-primary font-black uppercase tracking-wider text-[11px]">
-              <Layers className="w-3.5 h-3.5" />
-              <span>Customer Portal</span>
-            </div>
-            <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-foreground">
-              My Code Inventory
-            </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Account: <span className="font-semibold text-foreground">{user.email}</span>
+    <div className="bg-background text-foreground">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 md:py-12 lg:px-8">
+        {/* Header */}
+        <header className="flex flex-col gap-4 border-b border-border pb-6 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0 space-y-2">
+            <h1 className="font-display text-3xl text-foreground md:text-4xl">Your library</h1>
+            <p className="text-sm text-muted-foreground">
+              Signed in as <span className="break-all text-foreground">{user.email}</span>
             </p>
+            {totalCount > 0 && (
+              <p className="text-sm text-muted-foreground">
+                <span className="tabular font-medium text-foreground">{totalCount}</span>{" "}
+                {totalCount === 1 ? "product" : "products"} unlocked ·{" "}
+                <span className="tabular font-medium text-foreground">{formatMoney(totalInvested)}</span> spent ·
+                Commercial license for personal & client projects
+              </p>
+            )}
           </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="rounded-xl border-border/60 hover:bg-muted/40 text-xs font-bold"
-            >
-              <Link href="/handler/account-settings">Account Settings</Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild variant="outline">
+              <Link href="/handler/account-settings">Account settings</Link>
             </Button>
-            <Button
-              asChild
-              size="sm"
-              className="rounded-xl bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-xs uppercase tracking-wider shadow-[0_3px_0_#46A302] active:translate-y-px active:shadow-none"
-            >
-              <Link href="/explore">Explore Library</Link>
+            <Button asChild>
+              <Link href="/explore">Explore catalog</Link>
             </Button>
           </div>
-        </div>
-
-        {/* KPI Metrics Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-4 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <ShoppingBag className="w-3.5 h-3.5 text-primary" /> Unlocked Scripts
-            </span>
-            <p className="text-2xl font-black text-foreground font-mono">{totalCount}</p>
-            <p className="text-[11px] text-muted-foreground">Ready for instant download</p>
-          </div>
-
-          <div className="p-4 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <CreditCard className="w-3.5 h-3.5 text-emerald-500" /> Total Invested
-            </span>
-            <p className="text-2xl font-black text-foreground font-mono">{formatINR(totalInvested / 100)}</p>
-            <p className="text-[11px] text-emerald-500 font-bold">Lifetime access granted</p>
-          </div>
-
-          <div className="p-4 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#1CB0F6]" /> License Status
-            </span>
-            <p className="text-2xl font-black text-foreground">Commercial</p>
-            <p className="text-[11px] text-muted-foreground">Personal & client projects</p>
-          </div>
-        </div>
+        </header>
 
         {totalCount === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 border border-dashed border-border/60 rounded-3xl bg-card/20 space-y-4 text-center p-8">
-            <div className="w-14 h-14 rounded-2xl bg-muted/40 flex items-center justify-center">
-              <ShoppingBag className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <div className="space-y-1">
-              <h2 className="text-lg font-black text-foreground">No scripts unlocked yet</h2>
-              <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                Explore our catalog of production-ready SaaS boilerplates, scrapers, and tools to start building your library.
-              </p>
-            </div>
-            <Button
-              asChild
-              className="bg-[#58CC02] hover:bg-[#58CC02]/90 text-white font-black text-xs uppercase tracking-wider rounded-xl px-6 shadow-[0_3px_0_#46A302]"
-            >
-              <Link href="/explore">Browse Marketplace</Link>
+          <div className="max-w-xl py-16">
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">No products yet</h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Explore our catalog of production-ready SaaS boilerplates, scrapers, and tools to start building your
+              library. Everything you buy lands here with lifetime downloads.
+            </p>
+            <Button asChild className="mt-6">
+              <Link href="/explore">Browse marketplace</Link>
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Main Column: Purchased Products */}
-            <div className="lg:col-span-8 space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-border/30">
-                <h2 className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                  Purchased Products ({totalCount})
+          <div className="mt-8 grid grid-cols-1 gap-12 lg:grid-cols-12">
+            {/* Purchased products */}
+            <section aria-labelledby="library-heading" className="min-w-0 lg:col-span-8">
+              <div className="flex items-baseline justify-between gap-4 pb-3">
+                <h2 id="library-heading" className="text-base font-semibold text-foreground">
+                  Purchased products
                 </h2>
-                <span className="text-[11px] text-muted-foreground font-mono">Page {currentPage} of {totalPages}</span>
+                {totalPages > 1 && (
+                  <span className="tabular text-xs text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                )}
               </div>
 
-              <div className="space-y-3">
-                {purchasedItems.map((item) => (
-                  <div
-                    key={item.orderId}
-                    className="p-4 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-primary/30 transition-all shadow-sm"
-                  >
-                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-                      {/* Thumbnail / Category badge */}
-                      <div className="w-16 h-16 rounded-xl bg-muted/40 border border-border/40 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                        {item.product.thumbnail ? (
-                          <img
-                            src={item.product.thumbnail}
-                            alt={item.product.title}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <span className="text-[9px] font-black uppercase tracking-wider font-mono text-muted-foreground">
-                            {item.product.category.slice(0, 3)}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-[9px] font-black uppercase">
-                            {item.product.category}
-                          </span>
-                          <span className="text-[10px] font-mono text-muted-foreground">
-                            v{item.product.version}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            Purchased {new Date(item.purchaseDate).toLocaleDateString()}
-                          </span>
-                        </div>
-
+              {purchasedItems.length === 0 ? (
+                <p className="border-t border-border py-8 text-sm text-muted-foreground">
+                  Nothing on this page.{" "}
+                  <Link href="/dashboard" className="text-primary underline-offset-4 hover:underline">
+                    Go to the first page
+                  </Link>
+                </p>
+              ) : (
+                <ul className="divide-y divide-border border-y border-border">
+                  {purchasedItems.map((item) => (
+                    <li key={item.orderId} className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center">
+                      <div className="flex min-w-0 flex-1 items-start gap-4">
                         <Link
                           href={`/products/${item.product.slug}`}
-                          className="font-black text-sm text-foreground hover:text-primary transition-colors truncate block"
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          className="relative aspect-[16/10] w-24 shrink-0 overflow-hidden rounded-lg bg-secondary sm:w-28"
                         >
-                          {item.product.title}
+                          {item.product.thumbnail && (
+                            <Image src={item.product.thumbnail} alt="" fill sizes="112px" className="object-cover" />
+                          )}
                         </Link>
-
-                        <p className="text-xs text-muted-foreground line-clamp-1">
-                          {item.product.shortDescription}
-                        </p>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-sm font-medium leading-snug text-foreground sm:text-base">
+                            <Link
+                              href={`/products/${item.product.slug}`}
+                              className="hover:text-primary transition-colors"
+                            >
+                              {item.product.title}
+                            </Link>
+                          </h3>
+                          {item.product.shortDescription && (
+                            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
+                              {item.product.shortDescription}
+                            </p>
+                          )}
+                          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                            <span className="capitalize">{item.product.category.replace(/-/g, " ")}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono">v{item.product.version}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>
+                              Bought <time dateTime={new Date(item.purchaseDate).toISOString()}>{formatDate(item.purchaseDate)}</time>
+                            </span>
+                          </p>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/30">
-                      <Button
-                        asChild
-                        size="sm"
-                        className="bg-primary text-primary-foreground font-black text-xs uppercase tracking-wider rounded-xl h-9 px-4 shadow-sm"
-                      >
-                        <a href={`/api/download/${item.product.id}`}>
-                          <Download className="w-3.5 h-3.5 mr-1.5" /> Download ZIP
-                        </a>
-                      </Button>
-
-                      <Button
-                        asChild
-                        variant="outline"
-                        size="sm"
-                        className="rounded-xl border-border/60 hover:bg-muted/40 text-xs font-semibold h-9 px-3"
-                      >
-                        <Link href={`/dashboard/receipt/${item.orderId}`}>
-                          <FileText className="w-3.5 h-3.5 mr-1" /> Receipt
-                        </Link>
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                      <div className="flex shrink-0 items-center gap-2 sm:justify-end">
+                        <Button asChild size="sm">
+                          <a href={`/api/download/${item.product.id}`}>
+                            <Download strokeWidth={1.75} aria-hidden="true" />
+                            Download ZIP
+                          </a>
+                        </Button>
+                        <Button asChild variant="ghost" size="sm">
+                          <Link
+                            href={`/dashboard/receipt/${item.orderId}`}
+                            aria-label={`Receipt for ${item.product.title}`}
+                          >
+                            <FileText strokeWidth={1.75} aria-hidden="true" />
+                            Receipt
+                          </Link>
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {totalPages > 1 && (
-                <div className="pt-4 border-t border-border/40">
+                <div className="pt-2">
                   <ProductPagination totalPages={totalPages} currentPage={currentPage} />
                 </div>
               )}
-            </div>
+            </section>
 
-            {/* Right Column: Billing Ledger */}
-            <div className="lg:col-span-4 space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-border/30">
-                <h2 className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                  Recent Invoices
-                </h2>
-                <span className="text-[11px] text-muted-foreground">Latest 10</span>
-              </div>
-
-              <div className="p-4 rounded-2xl border border-border/50 bg-card/30 backdrop-blur-md space-y-3">
-                <div className="divide-y divide-border/30 text-xs">
-                  {billingHistory.map((item) => (
-                    <div key={item.orderId} className="py-2.5 flex items-center justify-between gap-3 first:pt-0 last:pb-0">
-                      <div className="space-y-0.5 min-w-0">
-                        <Link
-                          href={`/dashboard/receipt/${item.orderId}`}
-                          className="font-bold text-foreground hover:text-primary transition-colors truncate block text-xs"
-                        >
-                          {item.productTitle}
-                        </Link>
-                        <p className="text-[10px] text-muted-foreground font-mono">
-                          {new Date(item.purchaseDate).toLocaleDateString()} • TX: {item.orderId.slice(0, 8)}
-                        </p>
-                      </div>
-
-                      <div className="text-right font-mono shrink-0">
-                        <p className="font-black text-foreground">{formatINR(item.amount / 100)}</p>
-                        <Link
-                          href={`/dashboard/receipt/${item.orderId}`}
-                          className="text-[10px] text-primary hover:underline"
-                        >
-                          Invoice →
-                        </Link>
-                      </div>
-                    </div>
-                  ))}
+            {/* Billing ledger */}
+            <aside className="space-y-10 lg:col-span-4">
+              <section aria-labelledby="invoices-heading">
+                <div className="flex items-baseline justify-between gap-4 pb-3">
+                  <h2 id="invoices-heading" className="text-base font-semibold text-foreground">
+                    Recent invoices
+                  </h2>
+                  <span className="text-xs text-muted-foreground">Latest 10</span>
                 </div>
-              </div>
+                <table className="w-full border-y border-border text-sm">
+                  <caption className="sr-only">Your 10 most recent invoices</caption>
+                  <thead className="sr-only">
+                    <tr>
+                      <th scope="col">Product</th>
+                      <th scope="col">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {billingHistory.map((item) => (
+                      <tr key={item.orderId}>
+                        <td className="max-w-0 py-3 pr-3">
+                          <Link
+                            href={`/dashboard/receipt/${item.orderId}`}
+                            className="block truncate text-foreground hover:text-primary transition-colors"
+                          >
+                            {item.productTitle}
+                          </Link>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            {formatDate(item.purchaseDate)} ·{" "}
+                            <span className="font-mono">{item.orderId.slice(0, 8)}</span>
+                          </span>
+                        </td>
+                        <td
+                          className={`tabular whitespace-nowrap py-3 text-right align-top ${
+                            item.amount <= 0 ? "text-success" : "text-foreground"
+                          }`}
+                        >
+                          {formatAmount(item.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
 
-              {/* Creator Upsell Card */}
-              <div className="p-5 rounded-2xl border border-primary/20 bg-primary/5 space-y-2">
-                <h3 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-primary" />
-                  <span>Build & Sell Code</span>
-                </h3>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Turn your own templates and scripts into products. Keep 95% of direct sales with $0 monthly fees.
+              <section aria-labelledby="sell-heading" className="text-sm">
+                <h2 id="sell-heading" className="font-semibold text-foreground">
+                  Build and sell code
+                </h2>
+                <p className="mt-1.5 leading-relaxed text-muted-foreground">
+                  Turn your own templates and scripts into products. Keep 95% of direct sales with no monthly fees.
                 </p>
                 <Link
                   href="/creator"
-                  className="text-xs font-bold text-primary hover:underline inline-flex items-center gap-1 pt-1"
+                  className="mt-2 inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
                 >
-                  Learn About Selling <ArrowRight className="w-3 h-3" />
+                  Learn about selling
+                  <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 </Link>
-              </div>
-            </div>
+              </section>
+            </aside>
           </div>
         )}
       </div>

@@ -1,12 +1,12 @@
 import { db } from "@/db";
 import { coupons } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Sparkles, Percent, Gift, ArrowRight } from "lucide-react";
 import { Metadata } from "next";
+import { Button } from "@/components/ui/button";
+import { formatMoney } from "@/lib/price-utils";
+import { PRICING_RULES } from "@/config/pricing";
+import { CopyCodeButton } from "./_components/CopyCodeButton";
 
 export const metadata: Metadata = {
   title: "Exclusive Deals, Offers & Coupons",
@@ -18,134 +18,121 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+function describeDiscount(coupon: { discountType: string; discountValue: number }) {
+  return coupon.discountType === "percentage"
+    ? `${coupon.discountValue}% off`
+    : `${formatMoney(coupon.discountValue)} off`;
+}
+
 export default async function OffersPage() {
-  // Fetch active coupons from the database
-  const activeCoupons = await db.query.coupons.findMany({
-    where: eq(coupons.active, true),
-  });
+  // Active coupons only, newest first.
+  const activeCoupons = await db
+    .select({
+      id: coupons.id,
+      code: coupons.code,
+      discountType: coupons.discountType,
+      discountValue: coupons.discountValue,
+      minPurchaseAmount: coupons.minPurchaseAmount,
+    })
+    .from(coupons)
+    .where(eq(coupons.active, true))
+    .orderBy(desc(coupons.createdAt));
+
+  const bulkThreshold = formatMoney(PRICING_RULES.bulkDiscountThresholdCents);
+  const bulkPercent = PRICING_RULES.bulkDiscountPercent;
 
   return (
-    <div className="container max-w-7xl mx-auto px-4 py-16 md:py-24 space-y-16">
-      {/* Header */}
-      <div className="text-center space-y-4 max-w-2xl mx-auto">
-        <Badge variant="outline" className="rounded-full px-3 py-1 text-[10px] uppercase font-black tracking-[0.2em] border-emerald-500/20 text-emerald-500 bg-emerald-500/5">
-          Exclusive Deals
-        </Badge>
-        <h1 className="text-4xl md:text-6xl font-black tracking-tighter text-foreground sm:leading-[1.1]">
-          Marketplace Offers <br />
-          <span className="text-muted-foreground">& Discounts.</span>
-        </h1>
-        <p className="text-base text-muted-foreground font-medium max-w-md mx-auto leading-relaxed">
-          Grab high-quality templates, kits, and ebooks for a fraction of the cost with our active campaigns.
-        </p>
-      </div>
+    <div className="bg-background text-foreground">
+      <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 md:py-16 lg:px-8">
+        <header className="max-w-2xl">
+          <h1 className="font-display text-3xl leading-tight tracking-[-0.02em] text-balance md:text-4xl">
+            Marketplace offers &amp; discounts
+          </h1>
+          <p className="mt-3 text-base leading-relaxed text-muted-foreground">
+            Grab high-quality templates, kits, and ebooks for a fraction of the cost with our active campaigns.
+          </p>
+        </header>
 
-      {/* Offers Grids */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-        {/* Auto Offer Card */}
-        <Card className="border-emerald-500/20 bg-emerald-500/5 rounded-3xl p-6 sm:p-8 flex flex-col justify-between shadow-xl shadow-emerald-500/5 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-[50px] rounded-full pointer-events-none" />
-          <div className="space-y-6 relative z-10">
-            <div className="w-12 h-12 bg-emerald-500/10 text-emerald-500 rounded-2xl flex items-center justify-center">
-              <Sparkles className="w-6 h-6" />
-            </div>
-            <div className="space-y-2">
-              <Badge className="bg-emerald-500 text-neutral-950 font-black text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full">
-                Auto Applied
-              </Badge>
-              <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground leading-tight">
-                Get 20% Off Your Purchase
+        {/* Automatic bulk discount */}
+        <section
+          aria-labelledby="bulk-offer"
+          className="mt-10 rounded-2xl border border-border bg-card p-6 sm:p-8"
+        >
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-lg">
+              <p className="text-sm text-success">Applied automatically</p>
+              <h2 id="bulk-offer" className="mt-1 text-2xl font-medium tracking-[-0.01em]">
+                {bulkPercent}% off your cart
               </h2>
-              <p className="text-muted-foreground text-sm font-medium leading-relaxed">
-                Add premium boilerplates, kits, or prompts to your cart. Once your subtotal exceeds **$60.00**, a **20% flat discount** will be automatically applied at checkout.
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                Add boilerplates, kits, or prompts to your cart. Once your subtotal reaches{" "}
+                <span className="font-medium tabular-nums text-foreground">{bulkThreshold}</span>, a flat{" "}
+                {bulkPercent}% discount is applied at checkout. No code needed.
               </p>
-              <div className="mt-2 text-xs font-bold text-amber-500 flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-xl w-fit">
-                <span className="animate-pulse w-2 h-2 rounded-full bg-amber-500" />
-                <span>Urgent Promo: Only 15 uses remaining today. Expiry in 14 hours!</span>
-              </div>
             </div>
-
-          </div>
-          <div className="pt-8 border-t border-border/40 mt-8 flex items-center justify-between">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Min. Cart: $60.00</span>
-            <Button asChild className="rounded-xl h-10 px-6 font-bold uppercase tracking-wider text-[10px] cursor-pointer">
-              <Link href="/">
-                Shop Now
-                <ArrowRight className="w-3.5 h-3.5 ml-2" />
-              </Link>
+            <Button asChild variant="accent" className="self-start sm:self-auto">
+              <Link href="/explore">Shop now</Link>
             </Button>
           </div>
-        </Card>
+          <p className="mt-6 border-t border-border pt-4 text-sm tabular-nums text-muted-foreground">
+            Minimum cart: {bulkThreshold}
+          </p>
+        </section>
 
-        {/* Dynamic Coupon Offer Cards */}
-        {activeCoupons.length > 0 ? (
-          activeCoupons.map((coupon) => (
-            <Card key={coupon.id} className="border-border/50 bg-card/40 rounded-3xl p-6 sm:p-8 flex flex-col justify-between shadow-md relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 blur-[50px] rounded-full pointer-events-none" />
-              <div className="space-y-6 relative z-10">
-                <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center text-foreground/80">
-                  {coupon.discountType === "percentage" ? (
-                    <Percent className="w-5 h-5" />
-                  ) : (
-                    <Gift className="w-5 h-5" />
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Badge variant="secondary" className="font-bold text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full">
-                    Coupon Code
-                  </Badge>
-                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground leading-tight">
-                    {coupon.discountType === "percentage" 
-                      ? `Get ${coupon.discountValue}% Discount` 
-                      : `Get $${(coupon.discountValue / 100).toFixed(2)} Off`}
-                  </h2>
-                  <p className="text-muted-foreground text-sm font-medium leading-relaxed">
-                    Use the coupon code <strong className="text-foreground tracking-wider font-bold">"{coupon.code}"</strong> in your cart page to redeem this exclusive discount. 
-                    {coupon.minPurchaseAmount > 0 && ` Applicable for purchases over $${(coupon.minPurchaseAmount / 100).toFixed(2)}.`}
-                  </p>
-                </div>
-              </div>
-              <div className="pt-8 border-t border-border/40 mt-8 flex flex-col sm:flex-row gap-4 items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Code to copy:</span>
-                  <span className="text-base font-black text-foreground tracking-wider uppercase">{coupon.code}</span>
-                </div>
-                <Button asChild variant="outline" className="rounded-xl h-10 px-6 font-bold uppercase tracking-wider text-[10px] cursor-pointer w-full sm:w-auto">
-                  <Link href="/">
-                    Copy & Shop
-                  </Link>
-                </Button>
-              </div>
-            </Card>
-          ))
-        ) : (
-          <Card className="border-border/50 bg-card/40 rounded-3xl p-6 sm:p-8 flex flex-col justify-between shadow-md relative overflow-hidden group">
-            <div className="space-y-6">
-              <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center text-muted-foreground">
-                <Gift className="w-5 h-5" />
-              </div>
-              <div className="space-y-2">
-                <Badge variant="outline" className="font-bold text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full">
-                  Upcoming Promo
-                </Badge>
-                <h2 className="text-2xl font-black tracking-tight text-foreground">
-                  Stay Tuned!
-                </h2>
-                <p className="text-muted-foreground text-sm font-medium leading-relaxed">
-                  We launch custom coupon codes during holiday drops and builder spotlights. Check back soon for coupon code promotions.
-                </p>
-              </div>
-            </div>
-            <div className="pt-8 border-t border-border/40 mt-8 flex items-center justify-between">
-              <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Stay Updated</span>
-              <Button asChild variant="ghost" className="rounded-xl h-10 px-4 font-bold uppercase tracking-wider text-[10px] cursor-pointer">
-                <Link href="/">
-                  Back to Catalog
-                </Link>
+        {/* Coupon codes */}
+        <section aria-labelledby="coupon-codes" className="mt-14">
+          <h2 id="coupon-codes" className="font-display text-2xl tracking-[-0.02em]">
+            Coupon codes
+          </h2>
+
+          {activeCoupons.length > 0 ? (
+            <>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Enter a code on the cart page to redeem it.
+              </p>
+              <ul className="mt-6 divide-y divide-border border-y border-border">
+                {activeCoupons.map((coupon) => (
+                  <li
+                    key={coupon.id}
+                    className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-lg font-medium tabular-nums">{describeDiscount(coupon)}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Code{" "}
+                        <span className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[13px] text-foreground">
+                          {coupon.code}
+                        </span>
+                        {coupon.minPurchaseAmount > 0 && (
+                          <span className="tabular-nums">
+                            {" "}
+                            · on purchases over {formatMoney(coupon.minPurchaseAmount)}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <CopyCodeButton code={coupon.code} />
+                      <Button asChild variant="ghost" size="sm">
+                        <Link href="/cart">Go to cart</Link>
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <div className="mt-6 rounded-2xl bg-secondary/60 px-6 py-10">
+              <p className="text-base font-medium">No coupon codes right now</p>
+              <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+                We launch custom coupon codes during holiday drops and builder spotlights. Check back soon.
+              </p>
+              <Button asChild variant="outline" className="mt-5">
+                <Link href="/explore">Back to catalog</Link>
               </Button>
             </div>
-          </Card>
-        )}
+          )}
+        </section>
       </div>
     </div>
   );

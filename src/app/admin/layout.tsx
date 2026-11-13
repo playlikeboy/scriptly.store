@@ -31,13 +31,13 @@ export default async function AdminLayout({
   const pendingCount = Number(pendingCountResult?.count || 0);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="bg-background text-foreground lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]">
       <AdminNav pendingCount={pendingCount} />
-      <main className="min-h-screen lg:pl-60">
-        <div className="mx-auto w-full max-w-[1600px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8">
+      <div className="min-w-0">
+        <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
           {children}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

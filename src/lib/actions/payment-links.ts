@@ -1,24 +1,27 @@
 "use server";
 
-import Razorpay from "razorpay";
+import { cache } from "react";
+import { z } from "zod";
 import { db } from "@/db";
-import { paymentLinks, paymentLinkActivities, users } from "@/db/schema";
-import { eq, desc, sql } from "drizzle-orm";
-import crypto from "crypto";
+import { paymentLinks, paymentLinkActivities } from "@/db/schema";
+import { and, count, desc, eq, inArray, isNull, or, sql, sum } from "drizzle-orm";
 import { getOrCreateDbUser, isAdmin } from "@/lib/auth-utils";
 import { revalidatePath } from "next/cache";
-import { encodePaymentLinkPayload } from "@/lib/payments/link-encoder";
+import { encodePaymentLinkPayload, isSafeRedirectUrl } from "@/lib/payments/link-encoder";
+import {
+  getRazorpay,
+  getRazorpayKeyId,
+  randomHex,
+  verifyRazorpayPaymentSignature,
+} from "@/lib/payments/razorpay-server";
+import { recordPaymentLinkSuccess } from "@/lib/payments/fulfillment";
 
-let razorpayInstance: any = null;
+// payment_links.price / activity amounts are int4 paise.
+const MAX_PAISE = 2_147_483_647;
+const MAX_INR = Math.floor(MAX_PAISE / 100);
 
-function getRazorpay() {
-  if (!razorpayInstance) {
-    razorpayInstance = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_mockkeyid123",
-      key_secret: process.env.RAZORPAY_KEY_SECRET || "rzp_test_mocksecret123",
-    });
-  }
-  return razorpayInstance;
+function newActivityId() {
+  return `act_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 }
 
 function generateSlug(title: string, addRandom = false): string {
@@ -27,13 +30,40 @@ function generateSlug(title: string, addRandom = false): string {
     .trim()
     .replace(/[^\w\s-]/g, "")
     .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
   if (!addRandom) {
-    return base || `link-${crypto.randomBytes(3).toString("hex")}`;
+    return base || `link-${randomHex(3)}`;
   }
-  const rand = crypto.randomBytes(3).toString("hex");
+  const rand = randomHex(3);
   return base ? `${base}-${rand}` : `link-${rand}`;
 }
+
+function normalizeRedirectUrl(raw: string): string {
+  let url = raw.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    url = "https://" + url;
+  }
+  return url;
+}
+
+const currencySchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z]{3}$/, "Currency must be a 3-letter ISO code.")
+  .transform((c) => c.toUpperCase());
+
+const createLinkSchema = z.object({
+  title: z.string().trim().min(1, "Title is required.").max(200, "Title is too long."),
+  price: z
+    .number({ message: "Price must be greater than 0." })
+    .positive("Price must be greater than 0.")
+    .max(MAX_INR, "Price is too large."),
+  description: z.string().trim().max(2000, "Description is too long.").optional(),
+  redirectUrl: z.string().trim().min(1, "Redirect URL is required.").max(2048, "Redirect URL is too long."),
+  customSlug: z.string().trim().max(80, "Custom slug is too long.").optional(),
+  currency: currencySchema.optional(),
+});
 
 export interface CreatePaymentLinkInput {
   title: string;
@@ -49,30 +79,28 @@ export interface CreatePaymentLinkInput {
  * Accessible to Admin or logged in Creator, or anonymously via the Open API.
  */
 export async function createPaymentLinkAction(input: CreatePaymentLinkInput) {
-  if (!input.title || !input.title.trim()) {
-    throw new Error("Title is required.");
+  const parsed = createLinkSchema.safeParse({
+    ...input,
+    price: typeof input?.price === "string" ? Number(input.price) : input?.price,
+    description: input?.description || undefined,
+    customSlug: input?.customSlug || undefined,
+    currency: input?.currency || undefined,
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message || "Invalid payment link.");
   }
-  if (!input.redirectUrl || !input.redirectUrl.trim()) {
-    throw new Error("Redirect URL is required.");
-  }
-  if (!input.price || input.price <= 0) {
-    throw new Error("Price must be greater than 0.");
-  }
+  const data = parsed.data;
 
-  // Ensure valid URL
-  let parsedRedirect = input.redirectUrl.trim();
-  if (!/^https?:\/\//i.test(parsedRedirect)) {
-    parsedRedirect = "https://" + parsedRedirect;
-  }
-
-  try {
-    new URL(parsedRedirect);
-  } catch {
+  const parsedRedirect = normalizeRedirectUrl(data.redirectUrl);
+  if (!isSafeRedirectUrl(parsedRedirect)) {
     throw new Error("Invalid redirect URL format.");
   }
 
-  // Price converted to paise
-  const priceInPaise = Math.round(input.price * 100);
+  const priceInPaise = Math.round(data.price * 100);
+  if (priceInPaise < 100) {
+    throw new Error("Payment amount must be at least ₹1.");
+  }
+
   let user = null;
   try {
     user = await getOrCreateDbUser();
@@ -81,14 +109,16 @@ export async function createPaymentLinkAction(input: CreatePaymentLinkInput) {
   }
 
   const id = `pl_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  let slug = input.customSlug ? generateSlug(input.customSlug, false) : generateSlug(input.title, true);
+  let slug = data.customSlug ? generateSlug(data.customSlug, false) : generateSlug(data.title, true);
 
   // Ensure slug uniqueness
-  const existing = await db.query.paymentLinks.findFirst({
-    where: eq(paymentLinks.slug, slug),
-  });
+  const [existing] = await db
+    .select({ id: paymentLinks.id })
+    .from(paymentLinks)
+    .where(eq(paymentLinks.slug, slug))
+    .limit(1);
   if (existing) {
-    slug = `${slug}-${crypto.randomBytes(2).toString("hex")}`;
+    slug = `${slug}-${randomHex(2)}`;
   }
 
   const [newLink] = await db
@@ -96,10 +126,10 @@ export async function createPaymentLinkAction(input: CreatePaymentLinkInput) {
     .values({
       id,
       slug,
-      title: input.title.trim(),
-      description: input.description?.trim() || null,
+      title: data.title,
+      description: data.description || null,
       price: priceInPaise,
-      currency: input.currency?.toUpperCase() || "INR",
+      currency: data.currency || "INR",
       redirectUrl: parsedRedirect,
       creatorId: user?.id || null,
       active: true,
@@ -127,11 +157,9 @@ export async function getAdminPaymentLinksAction() {
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const links = await db.query.paymentLinks.findMany({
+  return db.query.paymentLinks.findMany({
     orderBy: [desc(paymentLinks.createdAt)],
   });
-
-  return links;
 }
 
 /**
@@ -143,12 +171,12 @@ export async function getPaymentLinkActivitiesAction(limit = 50) {
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const activities = await db.query.paymentLinkActivities.findMany({
-    orderBy: [desc(paymentLinkActivities.createdAt)],
-    limit,
-  });
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit)) || 50, 1), 500);
 
-  return activities;
+  return db.query.paymentLinkActivities.findMany({
+    orderBy: [desc(paymentLinkActivities.createdAt)],
+    limit: safeLimit,
+  });
 }
 
 /**
@@ -158,6 +186,9 @@ export async function togglePaymentLinkActiveAction(id: string, active: boolean)
   const authorized = await isAdmin();
   if (!authorized) {
     throw new Error("Unauthorized: Admin access required.");
+  }
+  if (typeof id !== "string" || !id || typeof active !== "boolean") {
+    throw new Error("Invalid request.");
   }
 
   await db
@@ -177,6 +208,9 @@ export async function deletePaymentLinkAction(id: string) {
   if (!authorized) {
     throw new Error("Unauthorized: Admin access required.");
   }
+  if (typeof id !== "string" || !id) {
+    throw new Error("Invalid request.");
+  }
 
   await db.delete(paymentLinks).where(eq(paymentLinks.id, id));
   revalidatePath("/admin/payment-links");
@@ -184,34 +218,96 @@ export async function deletePaymentLinkAction(id: string) {
 }
 
 /**
- * Fetches a public payment link by its slug or ID, and logs a view activity.
+ * Request-deduplicated lookup: generateMetadata and the page both call
+ * getPublicPaymentLinkAction, but a view is only counted once per request.
  */
-export async function getPublicPaymentLinkAction(slugOrId: string) {
-  const link = await db.query.paymentLinks.findFirst({
-    where: sql`${paymentLinks.slug} = ${slugOrId} OR ${paymentLinks.id} = ${slugOrId}`,
-  });
+const loadPublicLinkAndCountView = cache(async (slugOrId: string) => {
+  if (typeof slugOrId !== "string" || !slugOrId || slugOrId.length > 128) {
+    return null;
+  }
+
+  const [link] = await db
+    .select()
+    .from(paymentLinks)
+    .where(or(eq(paymentLinks.slug, slugOrId), eq(paymentLinks.id, slugOrId)))
+    .limit(1);
 
   if (link && link.active) {
-    // Increment view count asynchronously
-    await db
-      .update(paymentLinks)
-      .set({ views: sql`${paymentLinks.views} + 1` })
-      .where(eq(paymentLinks.id, link.id));
-
-    // Record activity
-    await db.insert(paymentLinkActivities).values({
-      id: `act_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
-      linkId: link.id,
-      type: "view",
-      amount: link.price,
-    });
+    try {
+      await Promise.all([
+        db
+          .update(paymentLinks)
+          .set({ views: sql`${paymentLinks.views} + 1` })
+          .where(eq(paymentLinks.id, link.id)),
+        db.insert(paymentLinkActivities).values({
+          id: newActivityId(),
+          linkId: link.id,
+          type: "view",
+          amount: link.price,
+        }),
+      ]);
+    } catch (err) {
+      // Analytics must never block the checkout page.
+      console.error("Failed to record payment link view:", err);
+    }
   }
 
   return link || null;
+});
+
+/**
+ * Fetches a public payment link by its slug or ID, and logs a view activity.
+ */
+export async function getPublicPaymentLinkAction(slugOrId: string) {
+  return loadPublicLinkAndCountView(slugOrId);
+}
+
+type ActivityType = "view" | "checkout_initiated" | "payment_success" | "payment_failed";
+
+interface ActivityInput {
+  linkId?: string | null;
+  type: ActivityType;
+  orderId?: string | null;
+  paymentId?: string | null;
+  amount?: number;
+  payerEmail?: string;
+  payerName?: string;
+  payerPhone?: string;
+  metadata?: string;
+}
+
+const clip = (value: string | undefined | null, max: number) =>
+  value ? String(value).slice(0, max) : null;
+
+async function insertActivity(input: ActivityInput) {
+  try {
+    const amount =
+      typeof input.amount === "number" && Number.isFinite(input.amount)
+        ? Math.min(Math.max(Math.round(input.amount), 0), MAX_PAISE)
+        : null;
+    await db.insert(paymentLinkActivities).values({
+      id: newActivityId(),
+      linkId: clip(input.linkId, 128),
+      type: input.type,
+      orderId: clip(input.orderId, 128),
+      paymentId: clip(input.paymentId, 128),
+      amount: amount || null,
+      payerEmail: clip(input.payerEmail, 254),
+      payerName: clip(input.payerName, 200),
+      payerPhone: clip(input.payerPhone, 32),
+      metadata: clip(input.metadata, 4000),
+    });
+  } catch (err) {
+    console.error("Failed to log activity:", err);
+  }
 }
 
 /**
  * Log an activity (view or checkout initiation) for dynamic or stored links.
+ *
+ * This is a public server action, so it only records the client-observable
+ * funnel events ("view", "checkout_initiated"). Payment outcomes are written
+ * exclusively by server-verified paths, so analytics revenue cannot be forged.
  */
 export async function logLinkActivityAction({
   linkId,
@@ -230,34 +326,27 @@ export async function logLinkActivityAction({
   payerPhone?: string;
   metadata?: string;
 }) {
-  try {
-    await db.insert(paymentLinkActivities).values({
-      id: `act_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
-      linkId: linkId || null,
-      type,
-      amount: amount || null,
-      payerEmail: payerEmail || null,
-      payerName: payerName || null,
-      payerPhone: payerPhone || null,
-      metadata: metadata || null,
-    });
-  } catch (err) {
-    console.error("Failed to log activity:", err);
+  if (type !== "view" && type !== "checkout_initiated") {
+    return;
   }
+  await insertActivity({ linkId, type, amount, payerEmail, payerName, payerPhone, metadata });
 }
+
+const createLinkOrderSchema = z.object({
+  linkId: z.string().trim().min(1).max(128).optional(),
+  title: z.string().trim().min(1).max(200),
+  priceInPaise: z.number().int().min(100, "Payment amount must be at least ₹1 (100 paise).").max(MAX_PAISE),
+  currency: currencySchema.optional().default("INR"),
+  payerEmail: z.string().trim().max(254).optional(),
+  payerName: z.string().trim().max(200).optional(),
+  payerPhone: z.string().trim().max(32).optional(),
+});
 
 /**
  * Initiates Razorpay Order for a Payment Link (stored or dynamic).
+ * Stored links are always charged their database price, never the client's.
  */
-export async function createLinkRazorpayOrderAction({
-  linkId,
-  title,
-  priceInPaise,
-  currency = "INR",
-  payerEmail,
-  payerName,
-  payerPhone,
-}: {
+export async function createLinkRazorpayOrderAction(rawInput: {
   linkId?: string;
   title: string;
   priceInPaise: number;
@@ -266,15 +355,46 @@ export async function createLinkRazorpayOrderAction({
   payerName?: string;
   payerPhone?: string;
 }) {
-  if (priceInPaise < 100) {
-    throw new Error("Payment amount must be at least ₹1 (100 paise).");
+  const parsed = createLinkOrderSchema.safeParse({
+    ...rawInput,
+    priceInPaise:
+      typeof rawInput?.priceInPaise === "number" ? Math.round(rawInput.priceInPaise) : rawInput?.priceInPaise,
+    linkId: rawInput?.linkId || undefined,
+    payerEmail: rawInput?.payerEmail || undefined,
+    payerName: rawInput?.payerName || undefined,
+    payerPhone: rawInput?.payerPhone || undefined,
+  });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message || "Invalid payment request.");
   }
 
-  const razorpay = getRazorpay();
+  const { linkId, payerEmail, payerName, payerPhone } = parsed.data;
+  let { title, priceInPaise, currency } = parsed.data;
+
+  if (linkId) {
+    const [link] = await db
+      .select({
+        id: paymentLinks.id,
+        title: paymentLinks.title,
+        price: paymentLinks.price,
+        currency: paymentLinks.currency,
+        active: paymentLinks.active,
+      })
+      .from(paymentLinks)
+      .where(eq(paymentLinks.id, linkId))
+      .limit(1);
+
+    if (!link || !link.active) {
+      throw new Error("This payment link is no longer active.");
+    }
+    title = link.title;
+    priceInPaise = link.price;
+    currency = (link.currency || "INR").toUpperCase();
+  }
 
   const options = {
     amount: priceInPaise,
-    currency: currency.toUpperCase(),
+    currency,
     receipt: `rcpt_link_${Date.now().toString().slice(-8)}`,
     notes: {
       type: "payment_link",
@@ -285,12 +405,20 @@ export async function createLinkRazorpayOrderAction({
     },
   };
 
-  const order = await razorpay.orders.create(options);
+  let order: { id: string; amount: number | string; currency: string };
+  try {
+    order = await getRazorpay().orders.create(options);
+  } catch (err) {
+    console.error("Razorpay payment link order creation failed:", err);
+    throw new Error("Payment gateway is temporarily unavailable. Please try again in a moment.");
+  }
 
-  // Log checkout initiation
-  await logLinkActivityAction({
+  // Checkout initiation; the orderId column is the server-trusted record of
+  // the amount/link for this order, used again during verification.
+  await insertActivity({
     linkId: linkId || null,
     type: "checkout_initiated",
+    orderId: order.id,
     amount: priceInPaise,
     payerEmail,
     payerName,
@@ -300,26 +428,78 @@ export async function createLinkRazorpayOrderAction({
 
   return {
     orderId: order.id,
-    amount: order.amount,
+    amount: Number(order.amount),
     currency: order.currency,
-    keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_mockkeyid123",
+    keyId: getRazorpayKeyId(),
   };
 }
 
+/** Server-trusted amount and link for a Razorpay order created above. */
+async function resolveTrustedLinkOrder(orderId: string): Promise<{
+  linkId: string | null;
+  amount: number;
+  title: string | null;
+} | null> {
+  const [initiated] = await db
+    .select({
+      linkId: paymentLinkActivities.linkId,
+      amount: paymentLinkActivities.amount,
+      metadata: paymentLinkActivities.metadata,
+    })
+    .from(paymentLinkActivities)
+    .where(
+      and(
+        eq(paymentLinkActivities.orderId, orderId),
+        eq(paymentLinkActivities.type, "checkout_initiated")
+      )
+    )
+    .orderBy(desc(paymentLinkActivities.createdAt))
+    .limit(1);
+
+  if (initiated && typeof initiated.amount === "number") {
+    let title: string | null = null;
+    try {
+      title = initiated.metadata ? JSON.parse(initiated.metadata).title ?? null : null;
+    } catch {
+      title = null;
+    }
+    return { linkId: initiated.linkId, amount: initiated.amount, title };
+  }
+
+  // Fallback for orders created before orderId was recorded: ask Razorpay.
+  try {
+    const rzpOrder = await getRazorpay().orders.fetch(orderId);
+    const notes = (rzpOrder.notes || {}) as Record<string, unknown>;
+    const noteLink = typeof notes.linkId === "string" ? notes.linkId : "";
+    return {
+      linkId: noteLink && noteLink !== "dynamic" ? noteLink : null,
+      amount: Number(rzpOrder.amount_paid || rzpOrder.amount) || 0,
+      title: typeof notes.title === "string" ? notes.title : null,
+    };
+  } catch (err) {
+    console.error("Failed to fetch Razorpay order for link verification:", err);
+    return null;
+  }
+}
+
+const verifyLinkSchema = z.object({
+  orderId: z.string().trim().min(1).max(128),
+  paymentId: z.string().trim().min(1).max(128),
+  signature: z.string().trim().min(1).max(256),
+  linkId: z.string().trim().max(128).optional(),
+  redirectUrl: z.string().trim().max(2048),
+  amount: z.number().optional(),
+  payerEmail: z.string().trim().max(254).optional(),
+  payerName: z.string().trim().max(200).optional(),
+  payerPhone: z.string().trim().max(32).optional(),
+});
+
 /**
  * Verifies Razorpay payment signature and completes payment link fulfillment.
+ * Amount and link attribution come from server records, and the success is
+ * recorded at most once per payment id (shared with the webhook).
  */
-export async function verifyLinkPaymentAction({
-  orderId,
-  paymentId,
-  signature,
-  linkId,
-  redirectUrl,
-  amount,
-  payerEmail,
-  payerName,
-  payerPhone,
-}: {
+export async function verifyLinkPaymentAction(rawInput: {
   orderId: string;
   paymentId: string;
   signature: string;
@@ -330,20 +510,30 @@ export async function verifyLinkPaymentAction({
   payerName?: string;
   payerPhone?: string;
 }) {
-  const secret = process.env.RAZORPAY_KEY_SECRET || "rzp_test_mocksecret123";
-  const body = orderId + "|" + paymentId;
-  const expectedSignature = crypto
-    .createHmac("sha256", secret)
-    .update(body.toString())
-    .digest("hex");
+  const parsed = verifyLinkSchema.safeParse({
+    ...rawInput,
+    linkId: rawInput?.linkId || undefined,
+    payerEmail: rawInput?.payerEmail || undefined,
+    payerName: rawInput?.payerName || undefined,
+    payerPhone: rawInput?.payerPhone || undefined,
+  });
+  if (!parsed.success) {
+    throw new Error("Invalid payment verification request.");
+  }
+  const { orderId, paymentId, signature, payerEmail, payerName, payerPhone } = parsed.data;
 
-  const isAuthentic = expectedSignature === signature;
+  const isAuthentic = await verifyRazorpayPaymentSignature({
+    razorpayOrderId: orderId,
+    razorpayPaymentId: paymentId,
+    signature,
+  });
 
   if (!isAuthentic) {
-    await logLinkActivityAction({
-      linkId: linkId || null,
+    await insertActivity({
+      linkId: parsed.data.linkId || null,
       type: "payment_failed",
-      amount,
+      orderId,
+      paymentId,
       payerEmail,
       payerName,
       payerPhone,
@@ -352,30 +542,32 @@ export async function verifyLinkPaymentAction({
     throw new Error("Invalid payment signature verification.");
   }
 
-  // Update link metrics if stored link
+  const trusted = await resolveTrustedLinkOrder(orderId);
+  const linkId = trusted ? trusted.linkId : null;
+
+  // Stored links redirect to their saved destination; dynamic links use the
+  // (validated) URL the payer was shown.
+  let redirectUrl = isSafeRedirectUrl(parsed.data.redirectUrl) ? parsed.data.redirectUrl : "/";
   if (linkId) {
-    await db
-      .update(paymentLinks)
-      .set({
-        conversions: sql`${paymentLinks.conversions} + 1`,
-        totalEarned: sql`${paymentLinks.totalEarned} + ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(paymentLinks.id, linkId));
+    const [link] = await db
+      .select({ redirectUrl: paymentLinks.redirectUrl })
+      .from(paymentLinks)
+      .where(eq(paymentLinks.id, linkId))
+      .limit(1);
+    if (link && isSafeRedirectUrl(link.redirectUrl)) {
+      redirectUrl = link.redirectUrl;
+    }
   }
 
-  // Log successful activity
-  await db.insert(paymentLinkActivities).values({
-    id: `act_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
-    linkId: linkId || null,
-    type: "payment_success",
+  await recordPaymentLinkSuccess({
+    linkId,
     orderId,
     paymentId,
-    amount,
+    amount: trusted?.amount ?? 0,
     payerEmail: payerEmail || null,
     payerName: payerName || null,
     payerPhone: payerPhone || null,
-    metadata: JSON.stringify({ redirectUrl }),
+    metadata: { redirectUrl, title: trusted?.title ?? null },
   });
 
   return {
@@ -397,7 +589,29 @@ export async function generateEncodedPaymentLinkAction(payload: {
   currency?: string;
   sign?: boolean;
 }) {
-  const token = encodePaymentLinkPayload(payload, payload.sign !== false);
+  const title = typeof payload?.title === "string" ? payload.title.trim() : "";
+  const price = Number(payload?.price);
+  const redirectUrl =
+    typeof payload?.redirectUrl === "string" ? normalizeRedirectUrl(payload.redirectUrl) : "";
+
+  if (!title || title.length > 200) throw new Error("Title is required.");
+  if (!Number.isFinite(price) || price <= 0 || price > MAX_INR) {
+    throw new Error("Price must be greater than 0.");
+  }
+  if (!isSafeRedirectUrl(redirectUrl)) throw new Error("Invalid redirect URL format.");
+
+  const token = encodePaymentLinkPayload(
+    {
+      title,
+      price,
+      redirectUrl,
+      description: typeof payload.description === "string" ? payload.description.slice(0, 2000) : null,
+      currency: typeof payload.currency === "string" && /^[A-Za-z]{3}$/.test(payload.currency)
+        ? payload.currency.toUpperCase()
+        : undefined,
+    },
+    payload.sign !== false
+  );
   return {
     success: true,
     token,
@@ -405,10 +619,17 @@ export async function generateEncodedPaymentLinkAction(payload: {
   };
 }
 
+/** Dynamic (/pay) activities have no stored link id. */
+const isDynamicActivity = or(isNull(paymentLinkActivities.linkId), eq(paymentLinkActivities.linkId, "dynamic"));
+
+const RECENT_DYNAMIC_LIMIT = 500;
+
 /**
  * Returns detailed analytics separated for:
  * 1) Stored Database Links (/pay/[slug])
  * 2) Dynamic On-The-Fly / Base64 Encoded Checkouts (/pay)
+ *
+ * All counts and sums are aggregated in SQL.
  */
 export async function getSeparatePaymentAnalyticsAction() {
   const authorized = await isAdmin();
@@ -416,43 +637,75 @@ export async function getSeparatePaymentAnalyticsAction() {
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const [allLinks, allActivities] = await Promise.all([
-    db.query.paymentLinks.findMany({
-      orderBy: [desc(paymentLinks.createdAt)],
-    }),
-    db.query.paymentLinkActivities.findMany({
-      orderBy: [desc(paymentLinkActivities.createdAt)],
-      limit: 500,
-    }),
+  const [storedAgg, dynamicByType, checkoutAgg, dynamicPaid] = await Promise.all([
+    db
+      .select({
+        totalLinks: count(),
+        activeLinks: sql<number>`count(*) filter (where ${paymentLinks.active})`.mapWith(Number),
+        totalViews: sum(paymentLinks.views).mapWith(Number),
+        totalConversions: sum(paymentLinks.conversions).mapWith(Number),
+        totalEarned: sum(paymentLinks.totalEarned).mapWith(Number),
+      })
+      .from(paymentLinks),
+    db
+      .select({
+        type: paymentLinkActivities.type,
+        n: count(),
+        amount: sum(paymentLinkActivities.amount).mapWith(Number),
+      })
+      .from(paymentLinkActivities)
+      .where(
+        and(
+          isDynamicActivity,
+          inArray(paymentLinkActivities.type, ["view", "checkout_initiated", "payment_success"])
+        )
+      )
+      .groupBy(paymentLinkActivities.type),
+    db
+      .select({ n: count() })
+      .from(paymentLinkActivities)
+      .where(eq(paymentLinkActivities.type, "checkout_initiated")),
+    db
+      .select({
+        id: paymentLinkActivities.id,
+        orderId: paymentLinkActivities.orderId,
+        paymentId: paymentLinkActivities.paymentId,
+        amount: paymentLinkActivities.amount,
+        payerEmail: paymentLinkActivities.payerEmail,
+        payerName: paymentLinkActivities.payerName,
+        payerPhone: paymentLinkActivities.payerPhone,
+        metadata: paymentLinkActivities.metadata,
+        createdAt: paymentLinkActivities.createdAt,
+      })
+      .from(paymentLinkActivities)
+      .where(and(isDynamicActivity, eq(paymentLinkActivities.type, "payment_success")))
+      .orderBy(desc(paymentLinkActivities.createdAt))
+      .limit(RECENT_DYNAMIC_LIMIT),
   ]);
 
-  // Separate activities into Stored Links vs Dynamic /pay checkouts
-  const storedActivities = allActivities.filter(a => a.linkId && a.linkId !== "dynamic");
-  const dynamicActivities = allActivities.filter(a => !a.linkId || a.linkId === "dynamic");
+  const stored = storedAgg[0];
+  const byType = new Map(dynamicByType.map((r) => [r.type, r]));
 
   // Dynamic /pay stats
-  const dynamicViews = dynamicActivities.filter(a => a.type === "view").length;
-  const dynamicCheckouts = dynamicActivities.filter(a => a.type === "checkout_initiated").length;
-  const dynamicPaid = dynamicActivities.filter(a => a.type === "payment_success");
-  const dynamicRevenuePaise = dynamicPaid.reduce((sum, a) => sum + (a.amount || 0), 0);
-  const dynamicRevenueINR = dynamicRevenuePaise / 100;
-  const dynamicConversionRate = dynamicViews > 0
-    ? ((dynamicPaid.length / dynamicViews) * 100).toFixed(1)
-    : dynamicCheckouts > 0
-      ? ((dynamicPaid.length / dynamicCheckouts) * 100).toFixed(1)
-      : "0.0";
+  const dynamicViews = byType.get("view")?.n ?? 0;
+  const dynamicCheckouts = byType.get("checkout_initiated")?.n ?? 0;
+  const dynamicPaidCount = byType.get("payment_success")?.n ?? 0;
+  const dynamicRevenueINR = (byType.get("payment_success")?.amount ?? 0) / 100;
+  const dynamicConversionRate =
+    dynamicViews > 0
+      ? ((dynamicPaidCount / dynamicViews) * 100).toFixed(1)
+      : dynamicCheckouts > 0
+        ? ((dynamicPaidCount / dynamicCheckouts) * 100).toFixed(1)
+        : "0.0";
 
   // Stored links stats
-  const storedTotalViews = allLinks.reduce((sum, l) => sum + (l.views || 0), 0);
-  const storedTotalConversions = allLinks.reduce((sum, l) => sum + (l.conversions || 0), 0);
-  const storedTotalRevenueINR = allLinks.reduce((sum, l) => sum + (l.totalEarned || 0), 0) / 100;
-  const storedActiveLinks = allLinks.filter(l => l.active).length;
-  const storedConversionRate = storedTotalViews > 0
-    ? ((storedTotalConversions / storedTotalViews) * 100).toFixed(1)
-    : "0.0";
+  const storedTotalViews = stored?.totalViews ?? 0;
+  const storedTotalConversions = stored?.totalConversions ?? 0;
+  const storedTotalRevenueINR = (stored?.totalEarned ?? 0) / 100;
+  const storedConversionRate =
+    storedTotalViews > 0 ? ((storedTotalConversions / storedTotalViews) * 100).toFixed(1) : "0.0";
 
-  // Recent dynamic transactions
-  const recentDynamicTransactions = dynamicPaid.map(p => {
+  const recentDynamicTransactions = dynamicPaid.map((p) => {
     let redirectUrl = null;
     let title = null;
     try {
@@ -479,13 +732,13 @@ export async function getSeparatePaymentAnalyticsAction() {
   return {
     overall: {
       totalRevenue: storedTotalRevenueINR + dynamicRevenueINR,
-      totalPaidOrders: storedTotalConversions + dynamicPaid.length,
+      totalPaidOrders: storedTotalConversions + dynamicPaidCount,
       totalViews: storedTotalViews + dynamicViews,
-      totalCheckouts: allActivities.filter(a => a.type === "checkout_initiated").length,
+      totalCheckouts: checkoutAgg[0]?.n ?? 0,
     },
     stored: {
-      totalLinks: allLinks.length,
-      activeLinks: storedActiveLinks,
+      totalLinks: stored?.totalLinks ?? 0,
+      activeLinks: stored?.activeLinks ?? 0,
       totalRevenue: storedTotalRevenueINR,
       totalConversions: storedTotalConversions,
       totalViews: storedTotalViews,
@@ -493,7 +746,7 @@ export async function getSeparatePaymentAnalyticsAction() {
     },
     dynamicPay: {
       totalRevenue: dynamicRevenueINR,
-      totalConversions: dynamicPaid.length,
+      totalConversions: dynamicPaidCount,
       totalCheckoutStarts: dynamicCheckouts,
       totalViews: dynamicViews,
       conversionRate: dynamicConversionRate,
@@ -511,32 +764,34 @@ export async function getSingleLinkAnalyticsAction(linkId: string) {
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const link = await db.query.paymentLinks.findFirst({
-    where: eq(paymentLinks.id, linkId),
-  });
+  const [linkRows, typeCounts, activities] = await Promise.all([
+    db.select().from(paymentLinks).where(eq(paymentLinks.id, linkId)).limit(1),
+    db
+      .select({ type: paymentLinkActivities.type, n: count() })
+      .from(paymentLinkActivities)
+      .where(eq(paymentLinkActivities.linkId, linkId))
+      .groupBy(paymentLinkActivities.type),
+    db.query.paymentLinkActivities.findMany({
+      where: eq(paymentLinkActivities.linkId, linkId),
+      orderBy: [desc(paymentLinkActivities.createdAt)],
+      limit: 100,
+    }),
+  ]);
 
+  const link = linkRows[0];
   if (!link) {
     throw new Error("Payment link not found.");
   }
 
-  const activities = await db.query.paymentLinkActivities.findMany({
-    where: eq(paymentLinkActivities.linkId, linkId),
-    orderBy: [desc(paymentLinkActivities.createdAt)],
-    limit: 100,
-  });
-
-  const views = activities.filter(a => a.type === "view").length;
-  const checkouts = activities.filter(a => a.type === "checkout_initiated").length;
-  const successes = activities.filter(a => a.type === "payment_success").length;
-  const failures = activities.filter(a => a.type === "payment_failed").length;
+  const countOf = (type: string) => typeCounts.find((r) => r.type === type)?.n ?? 0;
 
   return {
     link,
     metrics: {
-      views: Math.max(views, link.views),
-      checkouts,
-      successes: Math.max(successes, link.conversions),
-      failures,
+      views: Math.max(countOf("view"), link.views),
+      checkouts: countOf("checkout_initiated"),
+      successes: Math.max(countOf("payment_success"), link.conversions),
+      failures: countOf("payment_failed"),
       revenueINR: link.totalEarned / 100,
       conversionRate: link.views > 0 ? ((link.conversions / link.views) * 100).toFixed(1) : "0.0",
     },

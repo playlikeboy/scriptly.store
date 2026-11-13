@@ -1,87 +1,69 @@
+import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, BookOpen, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { ArrowRight } from "lucide-react";
+import type { BlogPost } from "@/lib/blog-data";
 
 interface LearnSectionProps {
-  posts: any[];
+  posts: BlogPost[];
 }
 
 export default function LearnSection({ posts = [] }: LearnSectionProps) {
   const displayPosts = posts.slice(0, 3);
+  if (displayPosts.length === 0) return null;
 
   return (
-    <section className="py-16 sm:py-24 border-b border-border/50">
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 space-y-12">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-primary">
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Engineering & Growth</span>
-            </div>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-foreground">
+    <section aria-labelledby="home-learn-title">
+      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 md:py-24 lg:px-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-xl">
+            <h2
+              id="home-learn-title"
+              className="font-display text-3xl font-medium tracking-[-0.02em] text-foreground md:text-4xl"
+            >
               Learn to ship
             </h2>
-            <p className="text-xs sm:text-sm text-muted-foreground max-w-lg">
-              Practical guides on micro-SaaS architecture, digital monetization, and shipping developer side projects.
+            <p className="mt-3 text-base text-muted-foreground">
+              Practical guides on micro-SaaS architecture, monetization and shipping side projects.
             </p>
           </div>
-
-          <Button asChild variant="outline" size="sm" className="rounded-xl font-bold self-start md:self-auto">
-            <Link href="/blog" className="flex items-center gap-1.5">
-              <span>View All Guides</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </Button>
+          <Link
+            href="/blog"
+            className="inline-flex items-center gap-1.5 self-start rounded-sm text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring sm:self-auto"
+          >
+            All guides
+            <ArrowRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          </Link>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <ul className="mt-10 grid grid-cols-1 gap-x-8 gap-y-12 md:grid-cols-3">
           {displayPosts.map((post) => (
-            <Link
-              key={post.slug}
-              href={`/blog/${post.slug}`}
-              className="group flex flex-col justify-between overflow-hidden rounded-3xl border border-border/50 bg-card/60 backdrop-blur-md hover:bg-card hover:border-border hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200"
-            >
-              <div>
-                <div className="relative aspect-[16/9] w-full overflow-hidden bg-secondary/40">
-                  <img
-                    src={post.thumbnail}
-                    alt={post.title}
-                    loading="lazy"
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                  <div className="absolute top-3 left-3">
-                    <Badge variant="outline" className="rounded-full bg-background/90 backdrop-blur-md text-[10px] font-bold uppercase px-2.5">
-                      {post.category}
-                    </Badge>
-                  </div>
+            <li key={post.slug}>
+              <Link
+                href={`/blog/${post.slug}`}
+                className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+              >
+                <div className="relative aspect-[16/10] overflow-hidden rounded-xl bg-secondary">
+                  {post.thumbnail && (
+                    <Image
+                      src={post.thumbnail}
+                      alt=""
+                      fill
+                      sizes="(min-width: 768px) 33vw, 100vw"
+                      className="object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+                    />
+                  )}
                 </div>
-
-                <div className="p-5 sm:p-6 space-y-2">
-                  <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-                    <Clock className="w-3 h-3" />
-                    <span>{post.readTime}</span>
-                    <span>•</span>
-                    <span>{post.createdAt}</span>
-                  </div>
-
-                  <h3 className="font-bold text-sm sm:text-base text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug">
-                    {post.title}
-                  </h3>
-
-                  <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                    {post.excerpt}
-                  </p>
-                </div>
-              </div>
-
-              <div className="px-5 sm:px-6 pb-5 pt-0 flex items-center gap-1 text-xs font-bold text-primary">
-                <span>Read Article</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
+                <p className="mt-4 text-xs text-muted-foreground">
+                  {post.category} · {post.readTime}
+                </p>
+                <h3 className="mt-1.5 font-display text-xl leading-snug font-medium text-foreground transition-colors group-hover:text-primary">
+                  {post.title}
+                </h3>
+                <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">{post.excerpt}</p>
+              </Link>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
     </section>
   );

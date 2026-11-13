@@ -1,10 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { getCategoriesAction, getSubcategoriesAction } from "@/lib/actions/products";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import ProductForm from "@/components/ProductForm";
-import { redirect } from "next/navigation";
+import { PageHeader } from "@/components/creator/console-ui";
 
 export const metadata: Metadata = {
   title: "List New Script | Creator Console",
@@ -14,29 +17,28 @@ export const metadata: Metadata = {
 export default async function CreatorNewScriptPage() {
   const user = await getOrCreateDbUser();
   if (!user) {
-    redirect("/handler/sign-in?redirectTo=/creator/dashboard");
+    redirect("/handler/sign-in?redirectTo=/creator/new");
   }
 
-  const categoriesList = await getCategoriesAction();
-  const subcategoriesList = await getSubcategoriesAction();
+  const [categoriesList, subcategoriesList] = await Promise.all([
+    getCategoriesAction(),
+    getSubcategoriesAction(),
+  ]);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="border-b border-border/40 pb-5">
-        <h1 className="text-2xl font-black tracking-tight text-foreground">
-          List New Script
-        </h1>
-        <p className="text-xs text-muted-foreground mt-1">
-          Share your custom code, boilerplate, or automation package on Scriptly. Keep 95% of direct sales.
-        </p>
-      </div>
-
-      <ProductForm 
-        categories={categoriesList} 
-        subcategories={subcategoriesList} 
-        isCreatorConsole={true} 
+    <div className="space-y-6">
+      <Link
+        href="/creator/products"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:underline focus-visible:outline-none"
+      >
+        <ArrowLeft className="size-4" strokeWidth={1.75} />
+        Products
+      </Link>
+      <PageHeader
+        title="New product"
+        description="Share your code, boilerplate or automation on Scriptly. You keep 95% of direct sales."
       />
+      <ProductForm categories={categoriesList} subcategories={subcategoriesList} isCreatorConsole />
     </div>
   );
 }

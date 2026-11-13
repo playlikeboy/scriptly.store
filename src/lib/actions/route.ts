@@ -12,18 +12,27 @@ export async function updateCreatorRazorpayAccountIdAction(userId: string, accou
     throw new Error("Unauthorized: Admin access required.");
   }
 
-  const idTrimmed = accountId.trim();
-  if (idTrimmed && !/^acc_[a-zA-Z0-9]+$/.test(idTrimmed)) {
+  if (typeof userId !== "string" || !userId || userId.length > 200) {
+    throw new Error("Invalid user id.");
+  }
+
+  const idTrimmed = (accountId ?? "").trim();
+  if (idTrimmed && !/^acc_[a-zA-Z0-9]{1,64}$/.test(idTrimmed)) {
     throw new Error("Invalid Razorpay Linked Account ID format. Should start with 'acc_'.");
   }
 
-  await db
+  const updated = await db
     .update(users)
     .set({
       razorpayAccountId: idTrimmed || null,
       updatedAt: new Date(),
     })
-    .where(eq(users.id, userId));
+    .where(eq(users.id, userId))
+    .returning({ id: users.id });
+
+  if (updated.length === 0) {
+    throw new Error("Creator not found.");
+  }
 
   revalidatePath("/admin/stores");
   revalidatePath("/admin/payouts");
@@ -36,12 +45,22 @@ export async function registerRazorpayRouteAccountAction(userId: string) {
     throw new Error("Unauthorized: Admin access required.");
   }
 
+  if (typeof userId !== "string" || !userId || userId.length > 200) {
+    throw new Error("Invalid user id.");
+  }
+
   const creator = await db.query.users.findFirst({
     where: eq(users.id, userId),
+    columns: { id: true, email: true, name: true, storeName: true, razorpayAccountId: true },
   });
 
   if (!creator) {
     throw new Error("Creator not found.");
+  }
+
+  if (creator.razorpayAccountId) {
+    // Already linked: don't create a duplicate Route account.
+    return { success: true, accountId: creator.razorpayAccountId };
   }
 
   const name = creator.storeName || creator.name || "Scriptly Creator";
@@ -56,7 +75,7 @@ export async function registerRazorpayRouteAccountAction(userId: string) {
   }
 
   try {
-    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    const auth = btoa(`${keyId}:${keySecret}`);
 
     const payload = {
       email: email,
@@ -75,7 +94,10 @@ export async function registerRazorpayRouteAccountAction(userId: string) {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json() as any;
+    const data = (await response.json().catch(() => ({}))) as {
+      id?: string;
+      error?: { description?: string };
+    };
 
     if (response.ok && data.id) {
       // Successfully registered sub-merchant!
@@ -93,8 +115,10 @@ export async function registerRazorpayRouteAccountAction(userId: string) {
 
     const errorMsg = data.error?.description || "Failed to register account with Razorpay.";
     throw new Error(errorMsg);
-  } catch (err: any) {
+  } catch (err) {
     console.error("Razorpay Route account registration error:", err);
-    throw new Error(err.message || "An unexpected error occurred during API registration.");
+    throw new Error(
+      err instanceof Error && err.message ? err.message : "An unexpected error occurred during API registration."
+    );
   }
 }

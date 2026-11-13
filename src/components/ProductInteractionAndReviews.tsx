@@ -1,23 +1,9 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
-import {
-  Eye,
-  Download,
-  Heart,
-  Star,
-  Send,
-  MessageSquare,
-  Loader2,
-  Sparkles,
-  CornerDownRight,
-  X,
-  ShieldCheck,
-  CheckCircle2,
-  ThumbsUp,
-} from "lucide-react";
+import { useState, useEffect, useTransition, useCallback, useId, useMemo } from "react";
+import { Heart, Star, Loader2, X, ThumbsUp, BadgeCheck, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   incrementViewAction,
@@ -28,6 +14,7 @@ import {
   toggleReviewLikeAction,
 } from "@/lib/actions/interactions";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 interface Review {
   id: string;
@@ -46,6 +33,8 @@ interface Review {
 
 interface ProductInteractionAndReviewsProps {
   productId: string;
+  /** Used for the sign-in return URL. Falls back to the product id. */
+  productSlug?: string;
   initialViews: number;
   initialDownloads: number;
   initialSaves: number;
@@ -55,8 +44,39 @@ interface ProductInteractionAndReviewsProps {
   showStats?: boolean;
 }
 
+const RATING_LABELS: Record<number, string> = {
+  1: "Poor (Needs improvement)",
+  2: "Fair (Basic expectations)",
+  3: "Good (Solid implementation)",
+  4: "Great (High quality)",
+  5: "Exceptional (Production ready)",
+};
+
+const formatDate = (value: Date | string, withYear = true) =>
+  new Date(value).toLocaleDateString("en-IN", {
+    month: "short",
+    day: "numeric",
+    ...(withYear ? { year: "numeric" } : {}),
+  });
+
+function Stars({ value, size = "size-3.5" }: { value: number; size?: string }) {
+  return (
+    <span className="flex items-center gap-0.5" role="img" aria-label={`${value} out of 5 stars`}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Star
+          key={i}
+          aria-hidden="true"
+          strokeWidth={1.75}
+          className={cn(size, i < value ? "fill-amber-500 text-amber-500" : "text-border")}
+        />
+      ))}
+    </span>
+  );
+}
+
 export default function ProductInteractionAndReviews({
   productId,
+  productSlug,
   initialViews,
   initialDownloads,
   initialSaves,
@@ -65,31 +85,43 @@ export default function ProductInteractionAndReviews({
   userLoggedIn,
   showStats = false,
 }: ProductInteractionAndReviewsProps) {
+  const formId = useId();
   const [views, setViews] = useState(initialViews);
-  const [downloads, setDownloads] = useState(initialDownloads);
   const [saves, setSaves] = useState(initialSaves);
   const [isSaved, setIsSaved] = useState(false);
   const [reviewsList, setReviewsList] = useState<Review[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(true);
+  const [reviewsError, setReviewsError] = useState(false);
 
-  // Form states
+  // Form state
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [ratingInput, setRatingInput] = useState(5);
   const [commentInput, setCommentInput] = useState("");
   const [hoverRating, setHoverRating] = useState<number | null>(null);
-
-  // Reply Mode states
   const [replyToReview, setReplyToReview] = useState<Review | null>(null);
-  const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
 
   const [isPending, startTransition] = useTransition();
 
-  // Load reviews and check interaction status
+  const signInHref = `/handler/sign-in?redirectTo=/products/${productSlug ?? productId}`;
+
+  const loadReviews = useCallback(async () => {
+    try {
+      const res = await getProductReviewsAction(productId);
+      if (res?.reviews) {
+        setReviewsList(res.reviews as Review[]);
+      }
+      setReviewsError(Boolean(res && "error" in res && res.error));
+    } catch (err) {
+      console.error("Failed to load reviews:", err);
+      setReviewsError(true);
+    } finally {
+      setLoadingReviews(false);
+    }
+  }, [productId]);
+
   useEffect(() => {
     incrementViewAction(productId).then((res) => {
-      if (res?.success) {
-        setViews((prev) => prev + 1);
-      }
+      if (res?.success) setViews((prev) => prev + 1);
     });
 
     loadReviews();
@@ -99,24 +131,11 @@ export default function ProductInteractionAndReviews({
         if (res) setIsSaved(res.isSaved);
       });
     }
-  }, [productId, userLoggedIn]);
-
-  const loadReviews = async () => {
-    try {
-      const res = await getProductReviewsAction(productId);
-      if (res?.reviews) {
-        setReviewsList(res.reviews as Review[]);
-      }
-    } catch (err) {
-      console.error("Failed to load reviews:", err);
-    } finally {
-      setLoadingReviews(false);
-    }
-  };
+  }, [productId, userLoggedIn, loadReviews]);
 
   const handleToggleSave = async () => {
     if (!userLoggedIn) {
-      toast.error("Please sign in to save products to your library!");
+      toast.error("Sign in to save products to your library.");
       return;
     }
 
@@ -130,16 +149,16 @@ export default function ProductInteractionAndReviews({
       if (res?.success) {
         setIsSaved(res.active || false);
         setSaves((prev) => (res.active ? prev + 1 : Math.max(0, prev - 1)));
-        toast.success(res.active ? "Added to saved items!" : "Removed from saved items.");
+        toast.success(res.active ? "Saved to your library." : "Removed from saved items.");
       }
     } catch {
-      toast.error("Failed to update save status.");
+      toast.error("Couldn't update saved status. Try again.");
     }
   };
 
   const handleToggleReviewLike = async (reviewId: string) => {
     if (!userLoggedIn) {
-      toast.error("Please sign in to vote on reviews!");
+      toast.error("Sign in to vote on reviews.");
       return;
     }
 
@@ -152,31 +171,43 @@ export default function ProductInteractionAndReviews({
 
       setReviewsList((prevList) =>
         prevList.map((r) => {
-          if (r.id === reviewId) {
-            const nextLiked = !r.userLiked;
-            return {
-              ...r,
-              userLiked: nextLiked,
-              likesCount: nextLiked ? r.likesCount + 1 : Math.max(0, r.likesCount - 1),
-            };
-          }
-          return r;
+          if (r.id !== reviewId) return r;
+          const nextLiked = !r.userLiked;
+          return {
+            ...r,
+            userLiked: nextLiked,
+            likesCount: nextLiked ? r.likesCount + 1 : Math.max(0, r.likesCount - 1),
+          };
         })
       );
     } catch {
-      toast.error("Failed to like review.");
+      toast.error("Couldn't record your vote. Try again.");
     }
   };
 
-  const handleReviewSubmit = async (e: React.FormEvent) => {
+  const openForm = (reply: Review | null = null) => {
+    if (!userLoggedIn) {
+      toast.error(reply ? "Sign in to reply." : "Sign in to leave a review.");
+      return;
+    }
+    setReplyToReview(reply);
+    setIsFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setIsFormOpen(false);
+    setReplyToReview(null);
+  };
+
+  const handleReviewSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!userLoggedIn) {
-      toast.error("Please sign in to submit a review!");
+      toast.error("Sign in to submit a review.");
       return;
     }
 
     if (!commentInput.trim()) {
-      toast.error("Please write a few words about your experience.");
+      toast.error("Write a few words about your experience.");
       return;
     }
 
@@ -190,375 +221,298 @@ export default function ProductInteractionAndReviews({
         return;
       }
 
-      toast.success(parentId ? "Reply submitted successfully!" : "Thank you for your review!");
+      toast.success(parentId ? "Reply posted." : "Thanks for your review.");
       setCommentInput("");
-      setReplyToReview(null);
-      setIsFormOpen(false);
+      closeForm();
       await loadReviews();
     });
   };
 
-  const parentReviews = reviewsList.filter((r) => !r.parentId);
-  const repliesMap = reviewsList.reduce<Record<string, Review[]>>((acc, r) => {
-    if (r.parentId) {
-      if (!acc[r.parentId]) acc[r.parentId] = [];
-      acc[r.parentId].push(r);
+  const { parentReviews, repliesMap } = useMemo(() => {
+    const parents: Review[] = [];
+    const map: Record<string, Review[]> = {};
+    for (const r of reviewsList) {
+      if (r.parentId) {
+        (map[r.parentId] ||= []).push(r);
+      } else {
+        parents.push(r);
+      }
     }
-    return acc;
-  }, {});
+    return { parentReviews: parents, repliesMap: map };
+  }, [reviewsList]);
 
-  const RATING_LABELS: Record<number, string> = {
-    1: "Poor (Needs improvement)",
-    2: "Fair (Basic expectations)",
-    3: "Good (Solid implementation)",
-    4: "Great (High quality)",
-    5: "Exceptional (Production ready)",
-  };
+  const ratingValue = Number.parseFloat(initialRating) || 0;
+  const displayedRating = hoverRating ?? ratingInput;
 
   return (
     <div className="space-y-8">
-      {/* 1. Header with Trust Rating and Action Buttons */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border/40">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-primary" />
-              <span>Builder Reviews &amp; Community Feedback</span>
-            </h3>
-            <Badge variant="outline" className="rounded-full text-[11px] font-bold border-border/60">
-              {parentReviews.length} {parentReviews.length === 1 ? "Review" : "Reviews"}
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Authentic feedback from verified founders, engineers, and creators.
+      {/* Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1.5">
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Reviews</h2>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            <Stars value={Math.round(ratingValue)} />
+            <span className="tabular font-medium text-foreground">{ratingValue.toFixed(1)}</span>
+            {initialRatingCount > 0 && (
+              <span className="tabular">
+                from {initialRatingCount} {initialRatingCount === 1 ? "rating" : "ratings"}
+              </span>
+            )}
+            <span aria-hidden="true">·</span>
+            <span className="tabular">
+              {parentReviews.length} {parentReviews.length === 1 ? "review" : "reviews"}
+            </span>
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <Button
+            type="button"
+            variant={isSaved ? "secondary" : "outline"}
             onClick={handleToggleSave}
-            variant="outline"
-            size="sm"
-            className={`rounded-xl font-bold text-xs h-9 px-3.5 border transition-all ${
-              isSaved
-                ? "bg-rose-500/10 text-rose-500 border-rose-500/30 hover:bg-rose-500/20"
-                : "border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40"
-            }`}
+            aria-pressed={isSaved}
           >
-            <Heart className={`w-3.5 h-3.5 mr-1.5 ${isSaved ? "fill-current" : ""}`} />
-            <span>{isSaved ? "Saved" : "Save"}</span>
-            {saves > 0 && <span className="ml-1 opacity-70">({saves})</span>}
+            <Heart
+              className={cn("size-4", isSaved && "fill-primary text-primary")}
+              strokeWidth={1.75}
+              aria-hidden="true"
+            />
+            {isSaved ? "Saved" : "Save"}
+            {saves > 0 && <span className="tabular text-muted-foreground">{saves}</span>}
           </Button>
 
           {!isFormOpen && (
-            <Button
-              onClick={() => {
-                if (!userLoggedIn) {
-                  toast.error("Please sign in to leave a review!");
-                  return;
-                }
-                setIsFormOpen(true);
-              }}
-              size="sm"
-              className="rounded-xl font-bold text-xs h-9 px-4 bg-primary text-primary-foreground hover:brightness-105 transition-all shadow-xs"
-            >
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-              <span>Write a Review</span>
+            <Button type="button" variant="default" onClick={() => openForm()}>
+              Write a review
             </Button>
           )}
         </div>
       </div>
 
-      {/* 2. Optional Telemetry Stats Strip (Only displayed if showStats is explicitly enabled) */}
+      {/* Optional stats (only when the creator enables it) */}
       {showStats && (
-        <div className="flex flex-wrap items-center gap-6 p-3.5 rounded-2xl border border-border/40 bg-muted/20 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Eye className="w-4 h-4 text-primary" />
-            <span className="font-semibold text-foreground">{views}</span>
-            <span>Views</span>
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+          <div className="flex items-baseline gap-1.5">
+            <dt className="text-muted-foreground">Views</dt>
+            <dd className="tabular font-medium text-foreground">{views}</dd>
           </div>
-          <div className="w-1 h-1 rounded-full bg-border" />
-          <div className="flex items-center gap-2">
-            <Download className="w-4 h-4 text-emerald-500" />
-            <span className="font-semibold text-foreground">{downloads}</span>
-            <span>Downloads</span>
+          <div className="flex items-baseline gap-1.5">
+            <dt className="text-muted-foreground">Downloads</dt>
+            <dd className="tabular font-medium text-foreground">{initialDownloads}</dd>
           </div>
-          <div className="w-1 h-1 rounded-full bg-border" />
-          <div className="flex items-center gap-2">
-            <Heart className="w-4 h-4 text-rose-500" />
-            <span className="font-semibold text-foreground">{saves}</span>
-            <span>Saves</span>
+          <div className="flex items-baseline gap-1.5">
+            <dt className="text-muted-foreground">Saves</dt>
+            <dd className="tabular font-medium text-foreground">{saves}</dd>
           </div>
-        </div>
+        </dl>
       )}
 
-      {/* 3. Review Submission Form (Expandable & Clean) */}
+      {/* Review form */}
       {isFormOpen && (
-        <div className="p-6 rounded-2xl border border-border/60 bg-muted/20 space-y-4 animate-in fade-in-50 duration-200">
-          <div className="flex items-center justify-between pb-3 border-b border-border/40">
-            <div className="flex items-center gap-2 text-xs font-bold text-foreground">
-              <Sparkles className="w-4 h-4 text-amber-500" />
-              <span>{replyToReview ? `Replying to @${replyToReview.user.name || "Builder"}` : "Share Your Experience"}</span>
-            </div>
-            <button
-              onClick={() => {
-                setIsFormOpen(false);
-                setReplyToReview(null);
-              }}
-              className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+        <div className="max-w-2xl rounded-2xl border border-border bg-card p-5 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-foreground">
+              {replyToReview ? `Reply to ${replyToReview.user.name || "Builder"}` : "Share your experience"}
+            </h3>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={closeForm} aria-label="Close review form">
+              <X strokeWidth={1.75} />
+            </Button>
           </div>
 
           {userLoggedIn ? (
-            <form onSubmit={handleReviewSubmit} className="space-y-4">
+            <form onSubmit={handleReviewSubmit} className="mt-4 space-y-4">
               {!replyToReview && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                      Your Rating
-                    </label>
-                    <span className="text-xs font-semibold text-amber-500">
-                      {RATING_LABELS[hoverRating ?? ratingInput]}
+                <fieldset className="space-y-1.5">
+                  <legend className="text-sm font-medium text-foreground">Your rating</legend>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center" onMouseLeave={() => setHoverRating(null)}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setRatingInput(star)}
+                          onMouseEnter={() => setHoverRating(star)}
+                          aria-label={`${star} star${star > 1 ? "s" : ""}`}
+                          aria-pressed={ratingInput === star}
+                          className="rounded-md p-1 transition-transform duration-150 hover:scale-110"
+                        >
+                          <Star
+                            strokeWidth={1.75}
+                            aria-hidden="true"
+                            className={cn(
+                              "size-6 transition-colors",
+                              star <= displayedRating ? "fill-amber-500 text-amber-500" : "text-border"
+                            )}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-sm text-muted-foreground" aria-live="polite">
+                      {RATING_LABELS[displayedRating]}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setRatingInput(star)}
-                        onMouseEnter={() => setHoverRating(star)}
-                        onMouseLeave={() => setHoverRating(null)}
-                        className="p-1 hover:scale-115 transition-transform cursor-pointer"
-                      >
-                        <Star
-                          className={`w-6 h-6 transition-colors ${
-                            star <= (hoverRating ?? ratingInput)
-                              ? "text-amber-400 fill-amber-400"
-                              : "text-muted-foreground/30"
-                          }`}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                </fieldset>
               )}
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                  Review &amp; Feedback
+                <label htmlFor={`${formId}-comment`} className="text-sm font-medium text-foreground">
+                  {replyToReview ? "Your reply" : "Your review"}
                 </label>
                 <textarea
+                  id={`${formId}-comment`}
                   value={commentInput}
                   onChange={(e) => setCommentInput(e.target.value)}
                   placeholder={
                     replyToReview
-                      ? "Write your reply..."
+                      ? "Write your reply…"
                       : "How was the code quality, documentation, and setup experience? Be honest to help fellow founders."
                   }
-                  rows={3}
-                  className="w-full rounded-xl border border-border/70 bg-background/80 px-4 py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-all resize-none font-medium"
+                  rows={4}
+                  className="w-full resize-y rounded-[10px] border border-input bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus-visible:border-ring focus-visible:outline-none"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setIsFormOpen(false);
-                    setReplyToReview(null);
-                  }}
-                  className="rounded-xl font-bold text-xs"
-                >
+              <div className="flex items-center justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={closeForm}>
                   Cancel
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={isPending}
-                  size="sm"
-                  className="rounded-xl font-bold text-xs px-5 bg-primary text-primary-foreground hover:brightness-105 transition-all shadow-xs"
-                >
-                  {isPending ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                      <span>Submitting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5 mr-1.5" />
-                      <span>{replyToReview ? "Post Reply" : "Submit Review"}</span>
-                    </>
-                  )}
+                <Button type="submit" disabled={isPending} aria-busy={isPending}>
+                  {isPending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+                  {isPending ? "Posting…" : replyToReview ? "Post reply" : "Submit review"}
                 </Button>
               </div>
             </form>
           ) : (
-            <div className="p-4 rounded-xl bg-background/50 border border-border/50 text-center space-y-3">
-              <p className="text-xs text-muted-foreground">You must be signed in to submit a verified review.</p>
-              <Button asChild size="sm" className="rounded-xl font-bold text-xs">
-                <Link href={`/handler/sign-in?redirectTo=/products/${productId}`}>Sign In to Review</Link>
+            <div className="mt-4 space-y-3 text-sm">
+              <p className="text-muted-foreground">Sign in to submit a verified review.</p>
+              <Button asChild>
+                <Link href={signInHref}>Sign in to review</Link>
               </Button>
             </div>
           )}
         </div>
       )}
 
-      {/* 4. Reviews List / Zero State */}
-      <div className="space-y-4">
-        {loadingReviews ? (
-          <div className="flex items-center justify-center py-12 text-muted-foreground text-xs gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            <span>Loading reviews...</span>
-          </div>
-        ) : parentReviews.length === 0 ? (
-          /* High-Trust Warm Zero State */
-          <div className="flex flex-col items-center justify-center py-12 px-6 rounded-2xl border border-dashed border-border/60 bg-muted/10 text-center space-y-3">
-            <div className="w-10 h-10 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center">
-              <Star className="w-5 h-5 fill-amber-500/20" />
-            </div>
-            <div className="space-y-1">
-              <h4 className="text-sm font-bold text-foreground">Be the first to review this release</h4>
-              <p className="text-xs text-muted-foreground max-w-md">
-                Have you evaluated, tested, or deployed this code? Share your experience to help the developer community.
-              </p>
-            </div>
-            {!isFormOpen && (
-              <Button
-                onClick={() => {
-                  if (!userLoggedIn) {
-                    toast.error("Please sign in to write a review!");
-                    return;
-                  }
-                  setIsFormOpen(true);
-                }}
-                variant="outline"
-                size="sm"
-                className="rounded-xl font-bold text-xs border-border/60 mt-1 hover:bg-muted/40"
-              >
-                <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
-                <span>Write First Review</span>
-              </Button>
-            )}
-          </div>
-        ) : (
-          /* List of Reviews */
-          <div className="space-y-4">
-            {parentReviews.map((rev) => {
-              const replies = repliesMap[rev.id] || [];
-              const initials = (rev.user.name || rev.user.email || "B")
-                .split(" ")
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join("")
-                .toUpperCase();
+      {/* Reviews list */}
+      {loadingReviews ? (
+        <ul className="divide-y divide-border" aria-busy="true" aria-label="Loading reviews">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <li key={i} className="flex gap-3 py-5">
+              <Skeleton className="size-9 shrink-0 rounded-full" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-full max-w-lg" />
+                <Skeleton className="h-3 w-2/3 max-w-md" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : reviewsError && parentReviews.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          <p>Reviews couldn&apos;t be loaded.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setLoadingReviews(true);
+              loadReviews();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : parentReviews.length === 0 ? (
+        <div className="max-w-xl space-y-3 py-4">
+          <MessageSquare className="size-5 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+          <h3 className="text-base font-semibold text-foreground">No reviews yet</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Have you evaluated, tested, or deployed this code? Share your experience to help the developer community.
+          </p>
+          {!isFormOpen && (
+            <Button type="button" variant="outline" onClick={() => openForm()}>
+              Write the first review
+            </Button>
+          )}
+        </div>
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {parentReviews.map((rev) => {
+            const replies = repliesMap[rev.id] || [];
+            const initials = (rev.user.name || rev.user.email || "B")
+              .split(" ")
+              .map((n) => n[0])
+              .slice(0, 2)
+              .join("")
+              .toUpperCase();
 
-              return (
-                <div
-                  key={rev.id}
-                  className="p-5 rounded-2xl border border-border/40 bg-card/40 hover:bg-card/70 transition-all space-y-3"
+            return (
+              <li key={rev.id} className="flex gap-3 py-5 sm:gap-4">
+                <span
+                  aria-hidden="true"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-secondary-foreground"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary font-bold text-xs flex items-center justify-center shrink-0">
-                        {initials}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs font-bold text-foreground">
-                            {rev.user.name || "Verified Builder"}
-                          </p>
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                            <ShieldCheck className="w-3 h-3" />
-                            <span>Verified</span>
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground font-mono">
-                          {new Date(rev.createdAt).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
-                        </p>
-                      </div>
-                    </div>
+                  {initials}
+                </span>
+                <article className="min-w-0 flex-1 space-y-2">
+                  <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="text-sm font-medium text-foreground">{rev.user.name || "Verified Builder"}</p>
+                    <span className="inline-flex items-center gap-1 text-xs text-success">
+                      <BadgeCheck className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                      Verified
+                    </span>
+                    <Stars value={rev.rating} />
+                    <time dateTime={new Date(rev.createdAt).toISOString()} className="text-xs text-muted-foreground">
+                      {formatDate(rev.createdAt)}
+                    </time>
+                  </header>
 
-                    {/* Star Rating Display */}
-                    <div className="flex items-center gap-1 text-amber-400">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star
-                          key={i}
-                          className={`w-3.5 h-3.5 ${
-                            i < rev.rating ? "text-amber-400 fill-amber-400" : "text-muted-foreground/30"
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <p className="text-xs sm:text-sm text-foreground/90 leading-relaxed font-normal pl-11">
+                  <p className="max-w-[68ch] whitespace-pre-line text-sm leading-relaxed text-foreground">
                     {rev.comment}
                   </p>
 
-                  {/* Actions: Helpful button & reply */}
-                  <div className="flex items-center justify-between pl-11 pt-1 text-xs">
-                    <button
+                  <div className="flex items-center gap-1 pt-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleToggleReviewLike(rev.id)}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                        rev.userLiked
-                          ? "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                      }`}
+                      aria-pressed={rev.userLiked}
+                      className={cn("-ml-3", rev.userLiked && "text-primary hover:text-primary")}
                     >
-                      <ThumbsUp className={`w-3 h-3 ${rev.userLiked ? "fill-current" : ""}`} />
-                      <span>Helpful {rev.likesCount > 0 ? `(${rev.likesCount})` : ""}</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (!userLoggedIn) {
-                          toast.error("Please sign in to reply!");
-                          return;
-                        }
-                        setReplyToReview(rev);
-                        setIsFormOpen(true);
-                      }}
-                      className="text-[11px] font-semibold text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-                    >
+                      <ThumbsUp className={cn(rev.userLiked && "fill-current")} strokeWidth={1.75} aria-hidden="true" />
+                      Helpful
+                      {rev.likesCount > 0 && <span className="tabular">{rev.likesCount}</span>}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => openForm(rev)}>
                       Reply
-                    </button>
+                    </Button>
                   </div>
 
-                  {/* Nested Replies */}
                   {replies.length > 0 && (
-                    <div className="mt-3 pl-11 space-y-2 border-l-2 border-border/40 ml-4">
+                    <ul className="mt-2 space-y-2">
                       {replies.map((reply) => (
-                        <div key={reply.id} className="p-3 rounded-xl bg-muted/30 space-y-1 text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-foreground">
-                              {reply.user.name || "Verified Builder"}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground font-mono">
-                              {new Date(reply.createdAt).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                              })}
-                            </span>
+                        <li key={reply.id} className="rounded-[10px] bg-secondary px-4 py-3 text-sm">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="font-medium text-foreground">{reply.user.name || "Verified Builder"}</span>
+                            <time
+                              dateTime={new Date(reply.createdAt).toISOString()}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {formatDate(reply.createdAt, false)}
+                            </time>
                           </div>
-                          <p className="text-muted-foreground">{reply.comment}</p>
-                        </div>
+                          <p className="mt-1 whitespace-pre-line text-muted-foreground">{reply.comment}</p>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                </article>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

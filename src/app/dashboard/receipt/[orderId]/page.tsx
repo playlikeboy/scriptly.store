@@ -1,20 +1,20 @@
 export const dynamic = "force-dynamic";
 
 import { Metadata } from "next";
-
-export const metadata: Metadata = {
-  title: "Purchase Receipt",
-};
-
 import { db } from "@/db";
 import { orders, products, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowLeft, CircleCheck } from "lucide-react";
 import { PrintButton } from "@/components/PrintButton";
+import { formatMoney } from "@/lib/price-utils";
+
+export const metadata: Metadata = {
+  title: "Purchase Receipt",
+  robots: { index: false, follow: false },
+};
 
 interface PageProps {
   params: Promise<{
@@ -30,7 +30,6 @@ export default async function ReceiptPage({ params }: PageProps) {
 
   const { orderId } = await params;
 
-  // Query order
   const orderRecord = await db.query.orders.findFirst({
     where: eq(orders.id, orderId),
   });
@@ -45,219 +44,177 @@ export default async function ReceiptPage({ params }: PageProps) {
     redirect("/dashboard");
   }
 
-  // Fetch product
-  const productRecord = await db.query.products.findFirst({
-    where: eq(products.id, orderRecord.productId),
-  });
+  const viewingOtherBuyer = isAdmin && orderRecord.userId !== user.id;
+
+  // Product and (for admins) buyer lookups are independent.
+  const [productRecord, buyer] = await Promise.all([
+    db.query.products.findFirst({ where: eq(products.id, orderRecord.productId) }),
+    viewingOtherBuyer
+      ? db.query.users.findFirst({ where: eq(users.id, orderRecord.userId) })
+      : Promise.resolve(undefined),
+  ]);
 
   if (!productRecord) {
     redirect("/dashboard");
   }
 
-  // Fetch buyer details if admin viewing someone else's order
-  let buyerEmail = user.email;
-  if (isAdmin && orderRecord.userId !== user.id) {
-    const buyer = await db.query.users.findFirst({
-      where: eq(users.id, orderRecord.userId),
-    });
-    if (buyer) {
-      buyerEmail = buyer.email;
-    }
-  }
+  const buyerEmail = buyer?.email ?? user.email;
 
   const invoiceNumber = `INV-${orderRecord.id.replace(/-/g, "").substring(0, 12).toUpperCase()}`;
-  const formattedDate = new Date(orderRecord.createdAt).toLocaleDateString("en-US", {
+  const formattedDate = new Date(orderRecord.createdAt).toLocaleDateString("en-IN", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 
-  const basePrice = productRecord.price / 100;
-  const discount = orderRecord.discountApplied / 100;
-  const totalAmount = orderRecord.amount / 100;
-
+  // All amounts are integer paise.
+  const basePrice = productRecord.price;
+  const discount = orderRecord.discountApplied;
+  const totalAmount = orderRecord.amount;
   const editCopyPrice = orderRecord.addOnEditCopy ? Math.round(productRecord.price / 3) : 0;
   const setupDeployPrice = orderRecord.addOnSetupDeploy ? Math.round(productRecord.price / 3) : 0;
-  const editCopyPriceUsd = editCopyPrice / 100;
-  const setupDeployPriceUsd = setupDeployPrice / 100;
-  
-  const subtotalAmount = basePrice + editCopyPriceUsd + setupDeployPriceUsd;
+  const subtotalAmount = basePrice + editCopyPrice + setupDeployPrice;
+
+  const inr = (paise: number) => formatMoney(paise);
 
   return (
-    <div className="min-h-screen bg-background text-foreground py-10 px-4 md:py-16">
-      <div className="max-w-3xl mx-auto space-y-6">
-        
-        {/* Navigation / Action bar (hidden on print) */}
-        <div className="no-print flex items-center justify-between bg-card/45 border border-border/60 p-4 rounded-[1.5rem] shadow-sm">
-          <Button asChild variant="ghost" size="sm" className="rounded-full h-10 px-4 font-bold uppercase tracking-widest text-[10px]">
-            <Link href="/dashboard">
-              <ArrowLeft className="w-3.5 h-3.5 mr-2" />
-              Back to Dashboard
-            </Link>
-          </Button>
+    <div className="bg-background text-foreground">
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 md:py-12 print:max-w-none print:p-0">
+        {/* Actions (hidden on print) */}
+        <div className="flex items-center justify-between gap-3 print:hidden">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            Back to library
+          </Link>
           <PrintButton />
         </div>
 
-        {/* Invoice Paper */}
-        <div className="bg-card border-2 border-border/50 rounded-[2.5rem] shadow-xl p-8 md:p-12 space-y-10 relative overflow-hidden">
-          
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start gap-6 pb-8 border-b border-border/60">
-            <div className="space-y-2">
-              <span className="font-sans font-black text-2xl tracking-tight text-foreground">
-                scriptly<span className="text-[#58CC02]">store</span>
-              </span>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
-                Official Digital Receipt
-              </p>
+        {/* Invoice */}
+        <article className="mt-6 rounded-2xl border border-border bg-card p-6 sm:p-10 print:mt-0 print:rounded-none print:border-0 print:p-0">
+          <header className="flex flex-col gap-6 border-b border-border pb-8 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="font-display text-2xl text-foreground">ScriptlyStore</p>
+              <p className="mt-1 text-sm text-muted-foreground">Official digital receipt</p>
             </div>
-            <div className="text-left sm:text-right space-y-1">
-              <h1 className="text-xl font-extrabold text-foreground tracking-tight uppercase">
-                Invoice
-              </h1>
-              <p className="text-xs font-mono font-bold text-muted-foreground">
-                {invoiceNumber}
-              </p>
+            <div className="sm:text-right">
+              <h1 className="font-display text-3xl text-foreground">Invoice</h1>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">{invoiceNumber}</p>
             </div>
-          </div>
+          </header>
 
-          {/* Meta Details */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-sm">
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                  Billed To
-                </h3>
-                <p className="font-bold text-foreground">{buyerEmail}</p>
-                <p className="text-xs text-muted-foreground">Verified Customer Account</p>
-              </div>
-              <div>
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                  Payment Status
-                </h3>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#58CC02]/10 text-[#58CC02] border border-[#58CC02]/20">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Successful & Completed
-                </div>
-              </div>
+          <dl className="grid grid-cols-1 gap-6 py-8 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Billed to</dt>
+              <dd className="mt-1 break-all font-medium text-foreground">{buyerEmail}</dd>
+              <dd className="text-xs text-muted-foreground">Verified customer account</dd>
             </div>
-
-            <div className="space-y-4 md:text-right">
-              <div>
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                  Date of Purchase
-                </h3>
-                <p className="font-bold text-foreground">{formattedDate}</p>
-              </div>
-              <div>
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                  Payment Reference
-                </h3>
-                <p className="font-mono text-xs text-foreground bg-muted/50 inline-block px-2.5 py-1 rounded-md border border-border/40">
-                  {orderRecord.razorpayPaymentId || "Razorpay API Payment"}
-                </p>
-              </div>
+            <div className="sm:text-right">
+              <dt className="text-muted-foreground">Date of purchase</dt>
+              <dd className="mt-1 font-medium text-foreground">{formattedDate}</dd>
             </div>
-          </div>
+            <div>
+              <dt className="text-muted-foreground">Payment status</dt>
+              <dd className="mt-1 inline-flex items-center gap-1.5 font-medium text-success">
+                <CircleCheck className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                Successful & completed
+              </dd>
+            </div>
+            <div className="sm:text-right">
+              <dt className="text-muted-foreground">Payment reference</dt>
+              <dd className="mt-1 break-all font-mono text-xs text-foreground">
+                {orderRecord.razorpayPaymentId || "Razorpay API Payment"}
+              </dd>
+            </div>
+          </dl>
 
-          {/* Line Items Table */}
-          <div className="border border-border/60 rounded-[1.5rem] overflow-hidden bg-muted/20">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="bg-muted/40 border-b border-border/60 font-black uppercase tracking-widest text-[9px] text-muted-foreground">
-                  <th className="p-4 pl-6">Item Description</th>
-                  <th className="p-4 text-right pr-6">Amount (USD)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40 font-medium">
+          {/* Line items */}
+          <table className="w-full border-collapse text-sm">
+            <caption className="sr-only">Line items</caption>
+            <thead>
+              <tr className="border-y border-border text-left text-xs text-muted-foreground">
+                <th scope="col" className="py-3 pr-4 font-medium">
+                  Item
+                </th>
+                <th scope="col" className="py-3 text-right font-medium">
+                  Amount (USD)
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              <tr>
+                <td className="py-4 pr-4">
+                  <p className="font-medium text-foreground">{productRecord.title}</p>
+                  <p className="mt-0.5 text-xs capitalize text-muted-foreground">
+                    {productRecord.category.replace(/-/g, " ")}
+                  </p>
+                </td>
+                <td className="tabular py-4 text-right align-top text-foreground">{inr(basePrice)}</td>
+              </tr>
+              {orderRecord.addOnEditCopy && (
                 <tr>
-                  <td className="p-4 pl-6">
-                    <p className="font-bold text-foreground">{productRecord.title}</p>
-                    <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">
-                      Category: {productRecord.category}
-                    </p>
+                  <td className="py-4 pr-4">
+                    <p className="font-medium text-foreground">Edit copy & content support</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Add-on service (1/3 product price)</p>
                   </td>
-                  <td className="p-4 text-right pr-6 font-semibold text-foreground">
-                    ${basePrice.toFixed(2)}
-                  </td>
+                  <td className="tabular py-4 text-right align-top text-foreground">{inr(editCopyPrice)}</td>
                 </tr>
-                {orderRecord.addOnEditCopy && (
-                  <tr>
-                    <td className="p-4 pl-6">
-                      <p className="font-bold text-foreground">Edit Copy & Content Support</p>
-                      <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">
-                        Add-on service (1/3 product price)
-                      </p>
-                    </td>
-                    <td className="p-4 text-right pr-6 font-semibold text-foreground">
-                      ${editCopyPriceUsd.toFixed(2)}
-                    </td>
-                  </tr>
-                )}
-                {orderRecord.addOnSetupDeploy && (
-                  <tr>
-                    <td className="p-4 pl-6">
-                      <p className="font-bold text-foreground">Setup & Deployment Support</p>
-                      <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">
-                        Add-on service (1/3 product price)
-                      </p>
-                    </td>
-                    <td className="p-4 text-right pr-6 font-semibold text-foreground">
-                      ${setupDeployPriceUsd.toFixed(2)}
-                    </td>
-                  </tr>
-                )}
-                {orderRecord.couponCode && (
-                  <tr className="text-[#FF4B4B] bg-[#FF4B4B]/5">
-                    <td className="p-4 pl-6 text-xs font-bold uppercase tracking-wider">
-                      Discount (Coupon: {orderRecord.couponCode})
-                    </td>
-                    <td className="p-4 text-right pr-6 font-semibold">
-                      -${discount.toFixed(2)}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              )}
+              {orderRecord.addOnSetupDeploy && (
+                <tr>
+                  <td className="py-4 pr-4">
+                    <p className="font-medium text-foreground">Setup & deployment support</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Add-on service (1/3 product price)</p>
+                  </td>
+                  <td className="tabular py-4 text-right align-top text-foreground">{inr(setupDeployPrice)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
 
-          {/* Summary / Total section */}
-          <div className="flex justify-end">
-            <div className="w-full sm:w-72 space-y-3 text-sm">
-              <div className="flex justify-between font-bold text-muted-foreground">
-                <span>Subtotal</span>
-                <span>${subtotalAmount.toFixed(2)}</span>
+          {/* Totals */}
+          <div className="mt-2 flex justify-end border-t border-border pt-4">
+            <dl className="w-full space-y-2 text-sm sm:w-72">
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Subtotal</dt>
+                <dd className="tabular text-foreground">{inr(subtotalAmount)}</dd>
               </div>
-              {orderRecord.couponCode && (
-                <div className="flex justify-between font-bold text-[#FF4B4B]">
-                  <span>Discount</span>
-                  <span>-${discount.toFixed(2)}</span>
+              {discount > 0 && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">
+                    Discount
+                    {orderRecord.couponCode && (
+                      <>
+                        {" "}
+                        <span className="font-mono text-xs">({orderRecord.couponCode})</span>
+                      </>
+                    )}
+                  </dt>
+                  <dd className="tabular text-success">−{inr(discount)}</dd>
                 </div>
               )}
-              <div className="border-t border-border/60 pt-3 flex justify-between items-baseline">
-                <span className="font-extrabold text-foreground uppercase tracking-wider text-[10px]">
-                  Total Paid
-                </span>
-                <span className="text-2xl font-black text-foreground">
-                  ${totalAmount.toFixed(2)}
-                </span>
+              <div className="flex items-baseline justify-between gap-4 border-t border-border pt-3">
+                <dt className="font-medium text-foreground">Total paid</dt>
+                <dd className="tabular text-2xl font-semibold tracking-tight text-foreground">{inr(totalAmount)}</dd>
               </div>
-            </div>
+            </dl>
           </div>
 
-          {/* Thank You Note */}
-          <div className="pt-8 border-t border-border/60 text-center space-y-3">
-            <p className="text-xs text-muted-foreground font-semibold leading-relaxed">
-              Thank you for supporting creators on ScriptlyStore! If you have any questions, feel free to contact our technical support.
+          <footer className="mt-10 border-t border-border pt-6 text-center text-xs text-muted-foreground">
+            <p>
+              Thank you for supporting creators on ScriptlyStore! If you have any questions, contact our technical
+              support.
             </p>
-            <div className="flex justify-center gap-6 text-[10px] font-mono text-muted-foreground/60 uppercase">
-              <span>https://scriptly.store</span>
-              <span>•</span>
-              <span>support@scriptly.store</span>
-            </div>
-          </div>
-
-        </div>
+            <p className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1">
+              <span>scriptly.store</span>
+              <a href="mailto:support@scriptly.store" className="hover:text-foreground transition-colors">
+                support@scriptly.store
+              </a>
+            </p>
+          </footer>
+        </article>
       </div>
     </div>
   );

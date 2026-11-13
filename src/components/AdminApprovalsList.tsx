@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { approveProductAction, rejectProductAction } from "@/lib/actions/products";
-import { toast } from "sonner";
-import { Check, X, Eye, Download, ShieldAlert, Loader2, Calendar, User, Mail } from "lucide-react";
 import Link from "next/link";
+import { Check, CheckCircle2, Download, ExternalLink, FileWarning, Loader2, Package, X } from "lucide-react";
+import { toast } from "sonner";
+import { approveProductAction, rejectProductAction } from "@/lib/actions/products";
 import { Button } from "@/components/ui/button";
+import { formatPrice } from "@/lib/price-utils";
+import { cn } from "@/lib/utils";
 
 interface PendingProduct {
   id: string;
@@ -13,8 +15,9 @@ interface PendingProduct {
   slug: string;
   price: number;
   category: string;
+  thumbnail?: string | null;
   fileUrl: string | null;
-  createdAt: Date;
+  createdAt: Date | string;
   creator: {
     name: string | null;
     email: string;
@@ -25,187 +28,144 @@ interface AdminApprovalsListProps {
   pendingItems: PendingProduct[];
 }
 
+const dateFormat = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
 export default function AdminApprovalsList({ pendingItems }: AdminApprovalsListProps) {
-  const [items, setItems] = useState<PendingProduct[]>(pendingItems);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [resolvedIds, setResolvedIds] = useState<string[]>([]);
+  const [processing, setProcessing] = useState<{ id: string; kind: "approve" | "reject" } | null>(null);
+  const [, startTransition] = useTransition();
 
-  const handleApprove = (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to approve "${title}"? This will list it live on the marketplace.`)) return;
+  const items = pendingItems.filter((item) => !resolvedIds.includes(item.id));
 
-    setProcessingId(id);
+  const moderate = (item: PendingProduct, kind: "approve" | "reject") => {
+    const prompt =
+      kind === "approve"
+        ? `Approve “${item.title}”? It will be listed live on the marketplace.`
+        : `Reject “${item.title}”? It will be marked rejected and stay unlisted.`;
+    if (!window.confirm(prompt)) return;
+
+    setProcessing({ id: item.id, kind });
     startTransition(async () => {
       try {
-        const res = await approveProductAction(id);
+        const res = kind === "approve" ? await approveProductAction(item.id) : await rejectProductAction(item.id);
         if (res.success) {
-          toast.success(`"${title}" approved successfully!`);
-          setItems((prev) => prev.filter((item) => item.id !== id));
+          toast.success(kind === "approve" ? `“${item.title}” approved and listed` : `“${item.title}” rejected`);
+          setResolvedIds((prev) => [...prev, item.id]);
         } else {
-          toast.error("Failed to approve script.");
+          toast.error(kind === "approve" ? "Could not approve this product." : "Could not reject this product.");
         }
-      } catch (err: any) {
-        toast.error(err.message || "Something went wrong.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Something went wrong. Try again.");
       } finally {
-        setProcessingId(null);
-      }
-    });
-  };
-
-  const handleReject = (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to reject "${title}"? This will set its status to rejected and keep it unlisted.`)) return;
-
-    setProcessingId(id);
-    startTransition(async () => {
-      try {
-        const res = await rejectProductAction(id);
-        if (res.success) {
-          toast.success(`"${title}" rejected.`);
-          setItems((prev) => prev.filter((item) => item.id !== id));
-        } else {
-          toast.error("Failed to reject script.");
-        }
-      } catch (err: any) {
-        toast.error(err.message || "Something went wrong.");
-      } finally {
-        setProcessingId(null);
+        setProcessing(null);
       }
     });
   };
 
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 border border-dashed border-neutral-800 rounded-3xl bg-neutral-900/10 text-center space-y-4">
-        <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-          <Check className="w-6 h-6 text-emerald-400" />
-        </div>
-        <div className="space-y-1">
-          <h3 className="text-base font-bold text-white uppercase tracking-wider">Inbox Clean</h3>
-          <p className="text-xs text-neutral-500 max-w-sm mx-auto leading-relaxed">
-            All creator script submissions have been moderated. Good job!
-          </p>
-        </div>
+      <div className="flex flex-col items-center rounded-2xl border border-border bg-card px-6 py-14 text-center">
+        <CheckCircle2 aria-hidden="true" strokeWidth={1.75} className="mb-3 size-5 text-success" />
+        <p className="text-sm font-medium text-foreground">Queue is clear</p>
+        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+          Every creator submission has been moderated. New submissions will appear here.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="border border-neutral-800/80 rounded-2xl overflow-hidden bg-neutral-900/10 backdrop-blur-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-neutral-800/80 bg-neutral-950/40 text-[10px] font-black uppercase tracking-wider text-neutral-400">
-                <th className="py-4 px-6">Product & Creator</th>
-                <th className="py-4 px-6">Proposed Price</th>
-                <th className="py-4 px-6">Assets & Code</th>
-                <th className="py-4 px-6 text-right">Moderation Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800/40 text-sm font-medium text-neutral-300">
-              {items.map((item) => (
-                <tr key={item.id} className="hover:bg-neutral-800/10 transition-colors">
-                  {/* Title & Creator Info */}
-                  <td className="py-5 px-6 space-y-2.5">
-                    <div className="space-y-1">
-                      <Link href={`/products/${item.slug}`} target="_blank" className="text-base font-extrabold text-white hover:underline flex items-center gap-2">
-                        {item.title}
-                        <span className="text-[9px] px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 font-bold uppercase tracking-wide">
-                          {item.category}
-                        </span>
-                      </Link>
-                      <div className="flex items-center gap-3 text-[10px] text-neutral-500 font-bold">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5" />
-                          {new Date(item.createdAt).toLocaleDateString()}
-                        </span>
-                        <span>•</span>
-                        <span className="font-mono">ID: {item.id.slice(0, 8)}</span>
-                      </div>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl bg-neutral-950/40 border border-neutral-800/50 space-y-1.5 max-w-sm">
-                      <div className="flex items-center gap-2 text-xs text-neutral-300">
-                        <User className="w-3.5 h-3.5 text-neutral-500" />
-                        <span className="font-bold">{item.creator?.name || "Anonymous Creator"}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[10.5px] text-neutral-500">
-                        <Mail className="w-3.5 h-3.5 text-neutral-500" />
-                        <span className="font-mono">{item.creator?.email || "no-email@hexclave.com"}</span>
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* Price */}
-                  <td className="py-5 px-6">
-                    <div className="flex items-baseline text-white font-mono font-black text-xl">
-                      <span className="text-neutral-500 text-sm font-sans mr-0.5">$</span>
-                      {(item.price / 100).toFixed(2)}
-                    </div>
-                  </td>
-
-                  {/* File & Review Links */}
-                  <td className="py-5 px-6 space-y-2">
-                    {item.fileUrl ? (
-                      <Button asChild size="sm" variant="outline" className="rounded-xl h-9 px-4 text-[10px] font-black uppercase tracking-widest border-neutral-800 hover:bg-neutral-800/50 hover:text-white cursor-pointer">
-                        <a href={item.fileUrl} download>
-                          <Download className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                          Download Script Bundle
-                        </a>
-                      </Button>
-                    ) : (
-                      <div className="text-[10px] text-rose-400 font-bold flex items-center gap-1.5">
-                        <ShieldAlert className="w-4 h-4" />
-                        No Script ZIP Uploaded
-                      </div>
-                    )}
-                    <div>
-                      <Button asChild size="sm" variant="ghost" className="h-8 text-[9px] font-black uppercase tracking-widest text-neutral-400 hover:text-white">
-                        <Link href={`/products/${item.slug}`} target="_blank">
-                          <Eye className="w-3.5 h-3.5 mr-1.5" />
-                          Preview Page Layout
-                        </Link>
-                      </Button>
-                    </div>
-                  </td>
-
-                  {/* Approve / Reject CTA */}
-                  <td className="py-5 px-6 text-right">
-                    <div className="flex items-center justify-end gap-2.5">
-                      <button
-                        type="button"
-                        disabled={processingId !== null}
-                        onClick={() => handleReject(item.id, item.title)}
-                        className="inline-flex items-center justify-center p-2.5 rounded-xl border border-neutral-800 text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10 hover:border-rose-500/20 transition-all disabled:opacity-40 cursor-pointer"
-                        title="Reject Listing"
-                      >
-                        {processingId === item.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
-                        ) : (
-                          <X className="w-4.5 h-4.5" />
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={processingId !== null}
-                        onClick={() => handleApprove(item.id, item.title)}
-                        className="inline-flex items-center justify-center p-2.5 rounded-xl bg-white text-black hover:bg-neutral-200 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-40 shadow-lg cursor-pointer"
-                        title="Approve & Publish Live"
-                      >
-                        {processingId === item.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-black" />
-                        ) : (
-                          <Check className="w-4.5 h-4.5" />
-                        )}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+    <section aria-label="Pending submissions" className="overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+        <h2 className="text-sm font-semibold text-foreground">Waiting for review</h2>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {items.length} {items.length === 1 ? "submission" : "submissions"}
+        </span>
       </div>
-    </div>
+
+      <ul className="divide-y divide-border">
+        {items.map((item) => {
+          const busy = processing?.id === item.id;
+          const locked = processing !== null;
+          return (
+            <li key={item.id} className="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div className="flex min-w-0 gap-3 sm:gap-4">
+                <div className="h-14 w-[5.5rem] shrink-0 overflow-hidden rounded-md bg-muted">
+                  {item.thumbnail ? (
+                    <img src={item.thumbnail} alt="" width={88} height={56} loading="lazy" decoding="async" className="size-full object-cover" />
+                  ) : (
+                    <div className="flex size-full items-center justify-center">
+                      <Package aria-hidden="true" strokeWidth={1.75} className="size-4 text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                    <Link
+                      href={`/products/${item.slug}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-w-0 text-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
+                    >
+                      {item.title}
+                    </Link>
+                    <span className={cn("text-sm font-medium tabular-nums", item.price <= 0 ? "text-success" : "text-foreground")}>
+                      {formatPrice(item.price)}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {item.category} · Submitted {dateFormat.format(new Date(item.createdAt))} ·{" "}
+                    <span className="font-mono text-[11px]">{item.id.slice(0, 8)}</span>
+                  </p>
+                  <p className="mt-1.5 truncate text-xs text-muted-foreground">
+                    <span className="text-foreground">{item.creator?.name || "Unnamed creator"}</span>
+                    {item.creator?.email ? <> · {item.creator.email}</> : " · No creator account linked"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                {item.fileUrl ? (
+                  <Button asChild size="sm" variant="outline">
+                    <a href={item.fileUrl} download>
+                      <Download aria-hidden="true" />
+                      Download bundle
+                    </a>
+                  </Button>
+                ) : (
+                  <span className="inline-flex h-8 items-center gap-1.5 px-1 text-xs text-destructive">
+                    <FileWarning aria-hidden="true" className="size-3.5" />
+                    No file uploaded
+                  </span>
+                )}
+                <Button asChild size="sm" variant="ghost">
+                  <Link href={`/products/${item.slug}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink aria-hidden="true" />
+                    Preview
+                  </Link>
+                </Button>
+                <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border sm:block" />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={locked}
+                  onClick={() => moderate(item, "reject")}
+                  className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+                >
+                  {busy && processing?.kind === "reject" ? <Loader2 aria-hidden="true" className="animate-spin" /> : <X aria-hidden="true" />}
+                  Reject
+                </Button>
+                <Button type="button" size="sm" disabled={locked} onClick={() => moderate(item, "approve")}>
+                  {busy && processing?.kind === "approve" ? <Loader2 aria-hidden="true" className="animate-spin" /> : <Check aria-hidden="true" />}
+                  Approve
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

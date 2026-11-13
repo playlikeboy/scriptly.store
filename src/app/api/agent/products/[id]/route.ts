@@ -1,146 +1,144 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { products } from "@/db/schema";
-import { eq, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
+import { authorizeAgentRequest, jsonError } from "../../_lib/auth";
+import { cleanSlug, formatZodIssues, productPatchSchema } from "../../_lib/product-schema";
 
-function authorize(request: NextRequest): boolean {
-  const authHeader = request.headers.get("authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return false;
-  }
-  const token = authHeader.substring(7);
-  return token === process.env.AGENT_API_KEY;
+type RouteContext = { params: Promise<{ id: string }> };
+
+function byIdOrSlug(idOrSlug: string) {
+  return or(eq(products.id, idOrSlug), eq(products.slug, idOrSlug));
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  if (!authorize(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+function isValidIdParam(id: string) {
+  return id.length > 0 && id.length <= 200;
+}
+
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  if (!(await authorizeAgentRequest(request))) {
+    return jsonError("Unauthorized", 401);
   }
 
+  const { id } = await params;
+  if (!isValidIdParam(id)) return jsonError("Invalid product id", 400);
+
   try {
-    const { id } = await params;
-    
-    const result = await db
-      .select()
-      .from(products)
-      .where(or(eq(products.id, id), eq(products.slug, id)))
-      .limit(1);
+    const result = await db.select().from(products).where(byIdOrSlug(id)).limit(1);
 
     if (result.length === 0) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return jsonError("Product not found", 404);
     }
 
-    return NextResponse.json({ success: true, product: result[0] });
-  } catch (error: any) {
+    return NextResponse.json(
+      { success: true, product: result[0] },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
     console.error("Agent API GET single product failed:", error);
-    return NextResponse.json({ error: error.message || "Server error" }, { status: 500 });
+    return jsonError("Server error", 500);
   }
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  if (!authorize(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function PATCH(request: NextRequest, { params }: RouteContext) {
+  if (!(await authorizeAgentRequest(request))) {
+    return jsonError("Unauthorized", 401);
   }
 
-  try {
-    const { id } = await params;
-    const body = await request.json() as any;
+  const { id } = await params;
+  if (!isValidIdParam(id)) return jsonError("Invalid product id", 400);
 
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError("Request body must be valid JSON", 400);
+  }
+
+  const parsed = productPatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return jsonError("Validation failed", 400, formatZodIssues(parsed.error));
+  }
+  const input = parsed.data;
+
+  try {
     const result = await db
-      .select()
+      .select({ id: products.id, slug: products.slug })
       .from(products)
-      .where(or(eq(products.id, id), eq(products.slug, id)))
+      .where(byIdOrSlug(id))
       .limit(1);
 
     if (result.length === 0) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return jsonError("Product not found", 404);
     }
 
     const product = result[0];
-    const updateData: any = {};
+    const { slug: rawSlug, ...rest } = input;
+    const updateData: Partial<typeof products.$inferInsert> = {};
 
-    const fields = [
-      "title", "slug", "shortDescription", "description", "category", "subcategory",
-      "tags", "thumbnail", "previewGif", "screenshots", "videoUrl", "demoUrl",
-      "fileUrl", "redirectDownload", "price", "version", "featured", "published",
-      "creatorId", "status", "rating", "ratingCount", "isFree", "discountPercent"
-    ];
-
-    for (const field of fields) {
-      if (body[field] !== undefined) {
-        if (field === "slug") {
-          updateData.slug = body.slug
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/(^-|-$)/g, "");
-
-          if (updateData.slug !== product.slug) {
-            const conflict = await db
-              .select({ id: products.id })
-              .from(products)
-              .where(eq(products.slug, updateData.slug))
-              .limit(1);
-            if (conflict.length > 0) {
-              return NextResponse.json({ error: `Slug '${updateData.slug}' is already taken.` }, { status: 409 });
-            }
-          }
-        } else if (field === "price" || field === "ratingCount" || field === "discountPercent") {
-          updateData[field] = Number(body[field]);
-        } else if (field === "featured" || field === "published" || field === "isFree" || field === "redirectDownload") {
-          updateData[field] = !!body[field];
-        } else {
-          updateData[field] = body[field];
-        }
+    // Copy only the keys the caller actually sent.
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined) {
+        (updateData as Record<string, unknown>)[key] = value;
       }
     }
 
-    if (body.promoStart !== undefined) updateData.promoStart = body.promoStart ? new Date(body.promoStart) : null;
-    if (body.promoEnd !== undefined) updateData.promoEnd = body.promoEnd ? new Date(body.promoEnd) : null;
-    
+    if (rawSlug !== undefined) {
+      const slug = cleanSlug(rawSlug);
+      if (!slug) {
+        return jsonError("Slug must contain at least one alphanumeric character.", 400);
+      }
+      if (slug !== product.slug) {
+        const conflict = await db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(eq(products.slug, slug), ne(products.id, product.id)))
+          .limit(1);
+        if (conflict.length > 0) {
+          return jsonError(`Slug '${slug}' is already taken.`, 409);
+        }
+      }
+      updateData.slug = slug;
+    }
+
     updateData.updatedAt = new Date();
 
     await db.update(products).set(updateData).where(eq(products.id, product.id));
 
     return NextResponse.json({ success: true, message: "Product updated successfully" });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Agent API PATCH product failed:", error);
-    return NextResponse.json({ error: error.message || "Server error" }, { status: 500 });
+    return jsonError("Server error", 500);
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  if (!authorize(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function DELETE(request: NextRequest, { params }: RouteContext) {
+  if (!(await authorizeAgentRequest(request))) {
+    return jsonError("Unauthorized", 401);
   }
 
+  const { id } = await params;
+  if (!isValidIdParam(id)) return jsonError("Invalid product id", 400);
+
   try {
-    const { id } = await params;
+    const deleted = await db
+      .delete(products)
+      .where(
+        inArray(
+          products.id,
+          db.select({ id: products.id }).from(products).where(byIdOrSlug(id)).limit(1)
+        )
+      )
+      .returning({ id: products.id });
 
-    const result = await db
-      .select({ id: products.id })
-      .from(products)
-      .where(or(eq(products.id, id), eq(products.slug, id)))
-      .limit(1);
-
-    if (result.length === 0) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    if (deleted.length === 0) {
+      return jsonError("Product not found", 404);
     }
 
-    await db.delete(products).where(eq(products.id, result[0].id));
-
     return NextResponse.json({ success: true, message: "Product deleted successfully" });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Agent API DELETE product failed:", error);
-    return NextResponse.json({ error: error.message || "Server error" }, { status: 500 });
+    return jsonError("Server error", 500);
   }
 }
 

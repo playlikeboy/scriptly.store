@@ -1,35 +1,100 @@
 "use server";
 
-import Razorpay from "razorpay";
+import { z } from "zod";
 import { getOrCreateDbUser } from "@/lib/auth-utils";
 import { db } from "@/db";
-import { products, orders, coupons, users, payouts, affiliateProfiles, affiliateCommissions } from "@/db/schema";
-import { eq, inArray, or } from "drizzle-orm";
-import crypto from "crypto";
+import { products, orders, coupons, users, affiliateProfiles } from "@/db/schema";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getProductEffectivePrice } from "@/lib/price-utils";
 import { cookies } from "next/headers";
-import { COMMISSION_RATES, PRICING_RULES } from "@/config/pricing";
+import { CHECKOUT_CURRENCY, COMMISSION_RATES, PRICING_RULES } from "@/config/pricing";
+import {
+  getRazorpay,
+  getRazorpayKeyId,
+  isRazorpayMockMode,
+  randomHex,
+  verifyRazorpayPaymentSignature,
+} from "@/lib/payments/razorpay-server";
+import { completeRazorpayOrder, failRazorpayOrder } from "@/lib/payments/fulfillment";
 
-let razorpayInstance: any = null;
+const REFERRAL_COOKIE = "scriptly_referred_by";
+const MAX_CART_ITEMS = 50;
 
-function getRazorpay() {
-  if (!razorpayInstance) {
-    razorpayInstance = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_mockkeyid123",
-      key_secret: process.env.RAZORPAY_KEY_SECRET || "rzp_test_mocksecret123",
-    });
-  }
-  return razorpayInstance;
+const idSchema = z.string().trim().min(1).max(128);
+
+const createOrderInputSchema = z.object({
+  productId: idSchema.optional(),
+  productIds: z.array(idSchema).max(MAX_CART_ITEMS).optional(),
+  couponCode: z.string().trim().max(64).optional(),
+  referredByCode: z.string().trim().max(128).optional(),
+  addOnEditCopy: z.boolean().optional().default(false),
+  addOnSetupDeploy: z.boolean().optional().default(false),
+});
+
+const verifyInputSchema = z.object({
+  razorpayPaymentId: z.string().trim().min(1).max(128),
+  razorpayOrderId: z.string().trim().min(1).max(128),
+  razorpaySignature: z.string().trim().max(256).optional(),
+});
+
+/** Resolves an approved affiliate (by id or slug) in a single joined query. */
+async function resolveApprovedAffiliate(code: string) {
+  const [row] = await db
+    .select({
+      id: users.id,
+      affiliateSlug: users.affiliateSlug,
+      razorpayAccountId: users.razorpayAccountId,
+    })
+    .from(users)
+    .innerJoin(affiliateProfiles, eq(affiliateProfiles.id, users.id))
+    .where(
+      and(
+        or(eq(users.id, code), eq(users.affiliateSlug, code)),
+        eq(affiliateProfiles.status, "approved")
+      )
+    )
+    .limit(1);
+  return row ?? null;
 }
 
-export async function createRazorpayOrderAction({
-  productId,
-  productIds,
-  couponCode,
-  referredByCode,
-  addOnEditCopy = false,
-  addOnSetupDeploy = false,
-}: {
+/**
+ * Multiplier from catalog minor units to INR paise for the Razorpay charge.
+ * See CHECKOUT_CURRENCY in src/config/pricing.ts.
+ */
+async function getCatalogToInrPaiseRate(): Promise<number> {
+  if (CHECKOUT_CURRENCY.catalogCurrency === "INR") return 1;
+
+  try {
+    const res = await fetch(CHECKOUT_CURRENCY.exchangeRateUrl, {
+      next: { revalidate: CHECKOUT_CURRENCY.exchangeRateRevalidateSeconds },
+      signal: AbortSignal.timeout(CHECKOUT_CURRENCY.exchangeRateTimeoutMs),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { rates?: Record<string, number> };
+      const live = data.rates?.INR;
+      if (typeof live === "number" && Number.isFinite(live) && live > 0) {
+        return live;
+      }
+    }
+  } catch (err) {
+    console.error(
+      `Failed to fetch live USD to INR exchange rate. Falling back to ${CHECKOUT_CURRENCY.fallbackUsdToInrRate}.`,
+      err
+    );
+  }
+  return CHECKOUT_CURRENCY.fallbackUsdToInrRate;
+}
+
+interface RazorpayTransfer {
+  account: string;
+  amount: number;
+  currency: string;
+  notes: Record<string, string>;
+  linked_to: string[];
+  on_hold: boolean;
+}
+
+export async function createRazorpayOrderAction(rawInput: {
   productId?: string;
   productIds?: string[];
   couponCode?: string;
@@ -42,329 +107,262 @@ export async function createRazorpayOrderAction({
     throw new Error("Unauthorized: Please sign in to purchase.");
   }
 
-  // Resolve referring affiliate if present in cookies or manual code input
-  const cookieStore = await cookies();
-  const referredByVal = referredByCode || cookieStore.get("scriptly_referred_by")?.value;
-  let resolvedReferrerId: string | null = null;
-
-  if (referredByVal && referredByVal !== user.id) {
-    const referrer = await db.query.users.findFirst({
-      where: or(eq(users.id, referredByVal), eq(users.affiliateSlug, referredByVal)),
-    });
-    if (referrer) {
-      const affiliateProfile = await db.query.affiliateProfiles.findFirst({
-        where: eq(affiliateProfiles.id, referrer.id),
-      });
-      if (affiliateProfile && affiliateProfile.status === "approved") {
-        resolvedReferrerId = referrer.id;
-        // Dynamically save to cookie if it was passed via manual code
-        if (referredByCode) {
-          cookieStore.set("scriptly_referred_by", referrer.affiliateSlug || referrer.id, {
-            maxAge: 30 * 24 * 60 * 60, // 30 days
-            path: "/",
-            sameSite: "lax",
-            secure: process.env.NODE_ENV === "production",
-          });
-        }
-      }
-    }
+  const parsed = createOrderInputSchema.safeParse(rawInput ?? {});
+  if (!parsed.success) {
+    throw new Error("Invalid checkout request.");
   }
+  const { productId, productIds, couponCode, referredByCode, addOnEditCopy, addOnSetupDeploy } =
+    parsed.data;
 
-  // Support both single productId and array of productIds
-  const idsToFetch = productIds && productIds.length > 0 
-    ? productIds 
-    : productId 
-      ? [productId] 
-      : [];
+  // Support both single productId and array of productIds (deduplicated)
+  const idsToFetch = [
+    ...new Set(productIds && productIds.length > 0 ? productIds : productId ? [productId] : []),
+  ];
 
   if (idsToFetch.length === 0) {
     throw new Error("No products selected for purchase.");
   }
 
-  // Fetch all selected products
-  const rawProducts = await db.query.products.findMany({
-    where: inArray(products.id, idsToFetch),
-  });
+  // Resolve referring affiliate (manual code or cookie) in parallel with the product fetch.
+  const cookieStore = await cookies();
+  const referredByVal = referredByCode || cookieStore.get(REFERRAL_COOKIE)?.value;
+
+  const [rawProducts, referrer] = await Promise.all([
+    db
+      .select()
+      .from(products)
+      .where(and(inArray(products.id, idsToFetch), eq(products.published, true))),
+    referredByVal && referredByVal !== user.id
+      ? resolveApprovedAffiliate(referredByVal)
+      : Promise.resolve(null),
+  ]);
+
+  // Self-referral (via own slug) earns nothing.
+  const resolvedReferrer = referrer && referrer.id !== user.id ? referrer : null;
+  const resolvedReferrerId = resolvedReferrer?.id ?? null;
+
+  if (resolvedReferrer && referredByCode) {
+    // Persist a manually entered code for 30 days
+    cookieStore.set(REFERRAL_COOKIE, resolvedReferrer.affiliateSlug || resolvedReferrer.id, {
+      maxAge: 30 * 24 * 60 * 60,
+      path: "/",
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+    });
+  }
 
   if (rawProducts.length === 0) {
     throw new Error("None of the selected products were found.");
   }
 
-  // Apply active promotions to products
-  const selectedProducts = rawProducts.map(p => {
+  // Server-side pricing: every amount below is recomputed from the database.
+  const selectedProducts = rawProducts.map((p) => {
     const promo = getProductEffectivePrice(p);
+    let addonPrice = 0;
+    if (addOnEditCopy) addonPrice += Math.round(p.price / PRICING_RULES.addonCostDivisor);
+    if (addOnSetupDeploy) addonPrice += Math.round(p.price / PRICING_RULES.addonCostDivisor);
     return {
       ...p,
       originalPrice: p.price,
-      price: promo.effectivePrice, // Use promotion price (discounted or 0 if free)
-    };
-  });
-
-  // Calculate Addon Costs per product (1/3rd of original MRP per add-on)
-  const selectedProductsWithAddons = selectedProducts.map(p => {
-    let addonPrice = 0;
-    if (addOnEditCopy) {
-      addonPrice += Math.round(p.originalPrice / 3);
-    }
-    if (addOnSetupDeploy) {
-      addonPrice += Math.round(p.originalPrice / 3);
-    }
-    return {
-      ...p,
+      price: promo.effectivePrice, // promotion price (discounted or 0 if free)
       addonPrice,
     };
   });
 
-  const totalAddonCost = selectedProductsWithAddons.reduce((sum, p) => sum + p.addonPrice, 0);
+  const totalAddonCost = selectedProducts.reduce((sum, p) => sum + p.addonPrice, 0);
 
-  // Calculate Subtotal (USD cents) (without addons)
+  // Subtotal in catalog minor units (without addons)
   const subtotal = selectedProducts.reduce((sum, p) => sum + p.price, 0);
 
-  // 1. Calculate Automatic 20% Discount over $60.00 (6000 cents)
-  let autoDiscount = 0;
-  if (subtotal >= 6000) {
-    autoDiscount = Math.round(subtotal * 0.20);
-  }
-
+  // 1. Automatic bulk discount
+  const autoDiscount =
+    subtotal >= PRICING_RULES.bulkDiscountThresholdCents
+      ? Math.round(subtotal * (PRICING_RULES.bulkDiscountPercent / 100))
+      : 0;
   const amountAfterAuto = subtotal - autoDiscount;
 
-  // 2. Validate and Apply Coupon if provided
+  // 2. Coupon
   let couponDiscount = 0;
   let validatedCouponCode: string | null = null;
 
   if (couponCode) {
-    const codeUpper = couponCode.trim().toUpperCase();
-    const coupon = await db.query.coupons.findFirst({
-      where: eq(coupons.code, codeUpper),
-    });
+    const [coupon] = await db
+      .select()
+      .from(coupons)
+      .where(eq(coupons.code, couponCode.toUpperCase()))
+      .limit(1);
 
     if (coupon && coupon.active) {
-      if (coupon.creatorId) {
-        // Find cart products belonging to this coupon creator
-        const creatorItems = selectedProducts.filter(p => p.creatorId === coupon.creatorId);
-        const creatorSubtotal = creatorItems.reduce((sum, p) => sum + p.price, 0);
+      // Store coupons only discount that creator's items; global ones the whole cart.
+      const base = coupon.creatorId
+        ? selectedProducts
+            .filter((p) => p.creatorId === coupon.creatorId)
+            .reduce((sum, p) => sum + p.price, 0)
+        : amountAfterAuto;
 
-        if (creatorSubtotal > 0 && amountAfterAuto >= coupon.minPurchaseAmount) {
-          validatedCouponCode = coupon.code;
-          if (coupon.discountType === "percentage") {
-            couponDiscount = Math.round(creatorSubtotal * (coupon.discountValue / 100));
-          } else if (coupon.discountType === "fixed") {
-            couponDiscount = Math.min(coupon.discountValue, creatorSubtotal);
-          }
-        }
-      } else {
-        // Global coupon
-        if (amountAfterAuto >= coupon.minPurchaseAmount) {
-          validatedCouponCode = coupon.code;
-          if (coupon.discountType === "percentage") {
-            couponDiscount = Math.round(amountAfterAuto * (coupon.discountValue / 100));
-          } else if (coupon.discountType === "fixed") {
-            couponDiscount = Math.min(coupon.discountValue, amountAfterAuto);
-          }
+      if (base > 0 && amountAfterAuto >= coupon.minPurchaseAmount) {
+        validatedCouponCode = coupon.code;
+        if (coupon.discountType === "percentage") {
+          const pct = Math.min(Math.max(coupon.discountValue, 0), 100);
+          couponDiscount = Math.round(base * (pct / 100));
+        } else if (coupon.discountType === "fixed") {
+          couponDiscount = Math.min(Math.max(coupon.discountValue, 0), base);
         }
       }
     }
   }
 
-  // 3. Referral 5% Discount
-  let referralDiscount = 0;
-  if (resolvedReferrerId) {
-    referralDiscount = Math.round((subtotal - autoDiscount - couponDiscount) * 0.05);
-  }
+  // 3. Referral buyer discount
+  const referralDiscount = resolvedReferrerId
+    ? Math.round(
+        Math.max(subtotal - autoDiscount - couponDiscount, 0) *
+          (PRICING_RULES.referralBuyerDiscountPercent / 100)
+      )
+    : 0;
 
   const totalDiscount = autoDiscount + couponDiscount + referralDiscount;
   const finalAmount = Math.max(subtotal - totalDiscount, 0) + totalAddonCost;
+  const productName =
+    selectedProducts.length === 1
+      ? selectedProducts[0].title
+      : `${selectedProducts.length} items in Cart`;
 
-  // Check if checkout is free
+  // Free checkout: complete instantly, no gateway involved.
   if (finalAmount === 0) {
-    const freeOrderId = "free_checkout_" + crypto.randomBytes(8).toString("hex");
-    const insertedOrders = [];
+    const freeOrderId = "free_checkout_" + randomHex(8);
+    const perItemDiscount = Math.round(totalDiscount / selectedProducts.length);
+    const rows = selectedProducts.map((product) => ({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      productId: product.id,
+      razorpayOrderId: freeOrderId,
+      razorpayPaymentId: "free_pay_" + randomHex(8),
+      amount: 0,
+      status: "completed",
+      couponCode: validatedCouponCode,
+      discountApplied: product.originalPrice - product.price + perItemDiscount,
+      addOnEditCopy,
+      addOnSetupDeploy,
+      referredById: resolvedReferrerId,
+    }));
 
-    for (let i = 0; i < selectedProductsWithAddons.length; i++) {
-      const product = selectedProductsWithAddons[i];
-      const orderId = crypto.randomUUID();
-
-      await db.insert(orders).values({
-        id: orderId,
-        userId: user.id,
-        productId: product.id,
-        razorpayOrderId: freeOrderId,
-        razorpayPaymentId: "free_pay_" + crypto.randomBytes(8).toString("hex"),
-        amount: 0,
-        status: "completed", // Completed instantly
-        couponCode: validatedCouponCode,
-        discountApplied: product.originalPrice - product.price + Math.round(totalDiscount / selectedProducts.length),
-        addOnEditCopy,
-        addOnSetupDeploy,
-        referredById: resolvedReferrerId,
-      });
-
-      insertedOrders.push({ id: orderId, productTitle: product.title });
-    }
+    await db.insert(orders).values(rows);
 
     return {
       success: true,
       isFreeCheckout: true,
       razorpayOrderId: freeOrderId,
-      redirectUrl: `/purchase-success?orderId=${insertedOrders[0].id}`,
+      redirectUrl: `/purchase-success?orderId=${rows[0].id}`,
       amount: 0,
       key: "",
-      productName: selectedProducts.length === 1 ? selectedProducts[0].title : `${selectedProducts.length} items in Cart`,
+      productName,
       userEmail: user.email,
       userName: user.name || "",
       isMock: true,
     };
   }
 
-  const razorpayAmount = Math.max(finalAmount, 100); // Minimum $1.00 for checkout
+  const razorpayAmount = Math.max(finalAmount, PRICING_RULES.minChargeableCents);
+  const rate = await getCatalogToInrPaiseRate();
+  const finalAmountInInrPaise = Math.round(razorpayAmount * rate);
 
-  // Fetch live exchange rate from USD to INR, fallback to 95 if API fails
-  let usdToInrRate = 95;
-  try {
-    const exchangeRes = await fetch("https://open.er-api.com/v6/latest/USD", {
-      next: { revalidate: 3600 } // Cache for 1 hour
-    });
-    if (exchangeRes.ok) {
-      const exchangeData = await exchangeRes.json() as { rates?: Record<string, number> };
-      const liveRate = exchangeData.rates?.["INR"];
-      if (liveRate && liveRate > 0) {
-        usdToInrRate = liveRate;
-      }
-    }
-  } catch (err) {
-    console.error("Failed to fetch live USD to INR exchange rate. Falling back to 95.", err);
-  }
-
-  const finalAmountInInrPaise = Math.round(razorpayAmount * usdToInrRate);
-
-  // 3. Compile transfers array for Razorpay Route
-  const transfers: any[] = [];
-  let distributedAmountSum = 0;
-  let distributedDiscountSum = 0;
-
-  // Query creators
-  const creatorIds = selectedProducts.map(p => p.creatorId).filter(Boolean) as string[];
-  const productCreators = creatorIds.length > 0
-    ? await db.query.users.findMany({ where: inArray(users.id, creatorIds) })
-    : [];
-
-  const affiliate = resolvedReferrerId
-    ? await db.query.users.findFirst({ where: eq(users.id, resolvedReferrerId) })
-    : null;
-
-  for (let i = 0; i < selectedProductsWithAddons.length; i++) {
-    const product = selectedProductsWithAddons[i];
-    const isLast = i === selectedProductsWithAddons.length - 1;
-
-    let itemAmount = 0;
+  // Proportional per-item allocation (catalog units); the last item absorbs rounding.
+  const netWithoutAddons = razorpayAmount - totalAddonCost;
+  let distributedAmount = 0;
+  let distributedDiscount = 0;
+  const allocations = selectedProducts.map((product, i) => {
+    const isLast = i === selectedProducts.length - 1;
+    let itemAmount: number;
+    let itemDiscount: number;
     if (isLast) {
-      itemAmount = (razorpayAmount - totalAddonCost) - distributedAmountSum;
+      itemAmount = netWithoutAddons - distributedAmount;
+      itemDiscount = totalDiscount - distributedDiscount;
     } else {
-      const ratio = product.price / subtotal;
-      itemAmount = Math.round((razorpayAmount - totalAddonCost) * ratio);
-      distributedAmountSum += itemAmount;
+      const ratio = subtotal > 0 ? product.price / subtotal : 1 / selectedProducts.length;
+      itemAmount = Math.round(netWithoutAddons * ratio);
+      itemDiscount = Math.round(totalDiscount * ratio);
+      distributedAmount += itemAmount;
+      distributedDiscount += itemDiscount;
+    }
+    return { product, itemAmount: itemAmount + product.addonPrice, itemDiscount };
+  });
+
+  // Razorpay Route transfers (INR paise)
+  const creatorIds = [
+    ...new Set(selectedProducts.map((p) => p.creatorId).filter((id): id is string => !!id)),
+  ];
+  const productCreators = creatorIds.length
+    ? await db
+        .select({ id: users.id, razorpayAccountId: users.razorpayAccountId })
+        .from(users)
+        .where(inArray(users.id, creatorIds))
+    : [];
+  const creatorById = new Map(productCreators.map((c) => [c.id, c]));
+
+  const transfers: RazorpayTransfer[] = [];
+  for (const { product, itemAmount } of allocations) {
+    const itemAmountInInrPaise = Math.round(itemAmount * rate);
+    let creatorSplit = Math.round(itemAmountInInrPaise * COMMISSION_RATES.directCreatorShare);
+    let affiliateSplit = 0;
+    const commissionPercent =
+      product.affiliateCommissionPercent ?? PRICING_RULES.defaultAffiliateCommissionPercent;
+
+    if (resolvedReferrer) {
+      affiliateSplit = Math.round(itemAmountInInrPaise * (commissionPercent / 100));
+      const creatorShare = Math.max(COMMISSION_RATES.directCreatorShare - commissionPercent / 100, 0);
+      creatorSplit = Math.round(itemAmountInInrPaise * creatorShare);
     }
 
-    // Add product-specific addon price to its item amount
-    itemAmount += product.addonPrice;
-
-    const itemAmountInInrPaise = Math.round(itemAmount * usdToInrRate);
-    
-    // Split Calculations
-    let creatorSplitInInrPaise = Math.round(itemAmountInInrPaise * 0.95);
-    let affiliateSplitInInrPaise = 0;
-    const commissionPercent = product.affiliateCommissionPercent ?? 30;
-
-    if (affiliate) {
-      affiliateSplitInInrPaise = Math.round(itemAmountInInrPaise * (commissionPercent / 100));
-      const creatorPercent = Math.max(0.95 - (commissionPercent / 100), 0);
-      creatorSplitInInrPaise = Math.round(itemAmountInInrPaise * creatorPercent);
-    }
-
-    const creator = productCreators.find(c => c.id === product.creatorId);
-    if (creator?.razorpayAccountId && creatorSplitInInrPaise > 0) {
+    const creator = product.creatorId ? creatorById.get(product.creatorId) : undefined;
+    if (creator?.razorpayAccountId && creatorSplit > 0) {
       transfers.push({
         account: creator.razorpayAccountId,
-        amount: creatorSplitInInrPaise,
-        currency: "INR",
-        notes: {
-          info: `Split transfer for product: ${product.title.slice(0, 30)}`,
-        },
+        amount: creatorSplit,
+        currency: CHECKOUT_CURRENCY.chargeCurrency,
+        notes: { info: `Split transfer for product: ${product.title.slice(0, 30)}` },
         linked_to: ["payment"],
         on_hold: false,
       });
     }
 
-    // Transfer to referring affiliate if they have a Razorpay Route Account linked
-    if (affiliate?.razorpayAccountId && affiliateSplitInInrPaise > 0) {
+    if (resolvedReferrer?.razorpayAccountId && affiliateSplit > 0) {
       transfers.push({
-        account: affiliate.razorpayAccountId,
-        amount: affiliateSplitInInrPaise,
-        currency: "INR",
-        notes: {
-          info: `Affiliate transfer for product: ${product.title.slice(0, 30)}`,
-        },
+        account: resolvedReferrer.razorpayAccountId,
+        amount: affiliateSplit,
+        currency: CHECKOUT_CURRENCY.chargeCurrency,
+        notes: { info: `Affiliate transfer for product: ${product.title.slice(0, 30)}` },
         linked_to: ["payment"],
         on_hold: false,
       });
     }
   }
 
-  // Generate Razorpay Order
-  let rzpOrderId = "rzp_order_mock_" + crypto.randomBytes(8).toString("hex");
-  const isMockKeys = (process.env.RAZORPAY_KEY_ID || "").startsWith("rzp_test_mock");
+  // Create the Razorpay order
+  const isMockKeys = isRazorpayMockMode();
+  let rzpOrderId = "rzp_order_mock_" + randomHex(8);
 
   if (!isMockKeys) {
     try {
-      const razorpay = getRazorpay();
-      const rzpPayload: any = {
-        amount: finalAmountInInrPaise, // INR paise
-        currency: "INR",
-        receipt: crypto.randomUUID(),
-      };
+      const payload = {
+        amount: finalAmountInInrPaise,
+        currency: CHECKOUT_CURRENCY.chargeCurrency,
+        receipt: crypto.randomUUID().replace(/-/g, "").slice(0, 32),
+        notes: { type: "store_checkout", userId: user.id },
+        ...(transfers.length > 0 ? { transfers } : {}),
+      } as unknown as Parameters<ReturnType<typeof getRazorpay>["orders"]["create"]>[0];
 
-      if (transfers.length > 0) {
-        rzpPayload.transfers = transfers;
-      }
-
-      const rzpOrder = await razorpay.orders.create(rzpPayload);
+      const rzpOrder = await getRazorpay().orders.create(payload);
       rzpOrderId = rzpOrder.id;
     } catch (error) {
-      console.error("Razorpay order creation failed, falling back to mock:", error);
+      // A mock order id can never be paid with live keys, so fail loudly instead.
+      console.error("Razorpay order creation failed:", error);
+      throw new Error("Payment gateway is temporarily unavailable. Please try again in a moment.");
     }
   }
 
-  // Proportionally distribute the discounts and paid amounts among orders (in USD cents)
-  const insertedOrders = [];
-  distributedAmountSum = 0;
-  distributedDiscountSum = 0;
-
-  for (let i = 0; i < selectedProductsWithAddons.length; i++) {
-    const product = selectedProductsWithAddons[i];
-    const isLast = i === selectedProductsWithAddons.length - 1;
-
-    let itemDiscount = 0;
-    let itemAmount = 0;
-
-    if (isLast) {
-      itemDiscount = totalDiscount - distributedDiscountSum;
-      itemAmount = (razorpayAmount - totalAddonCost) - distributedAmountSum;
-    } else {
-      const ratio = product.price / subtotal;
-      itemDiscount = Math.round(totalDiscount * ratio);
-      itemAmount = Math.round((razorpayAmount - totalAddonCost) * ratio);
-
-      distributedDiscountSum += itemDiscount;
-      distributedAmountSum += itemAmount;
-    }
-
-    // Add product-specific addon price to its item amount
-    itemAmount += product.addonPrice;
-
-    const orderId = crypto.randomUUID();
-
-    await db.insert(orders).values({
-      id: orderId,
+  await db.insert(orders).values(
+    allocations.map(({ product, itemAmount, itemDiscount }) => ({
+      id: crypto.randomUUID(),
       userId: user.id,
       productId: product.id,
       razorpayOrderId: rzpOrderId,
@@ -375,28 +373,22 @@ export async function createRazorpayOrderAction({
       addOnEditCopy,
       addOnSetupDeploy,
       referredById: resolvedReferrerId,
-    });
-
-    insertedOrders.push({ id: orderId, productTitle: product.title });
-  }
+    }))
+  );
 
   return {
     success: true,
     razorpayOrderId: rzpOrderId,
     amount: finalAmountInInrPaise, // INR paise
-    key: process.env.RAZORPAY_KEY_ID || "rzp_test_mockkeyid123",
-    productName: selectedProducts.length === 1 ? selectedProducts[0].title : `${selectedProducts.length} items in Cart`,
+    key: getRazorpayKeyId(),
+    productName,
     userEmail: user.email,
     userName: user.name || "",
     isMock: isMockKeys,
   };
 }
 
-export async function verifyPaymentAction({
-  razorpayPaymentId,
-  razorpayOrderId,
-  razorpaySignature,
-}: {
+export async function verifyPaymentAction(rawInput: {
   razorpayPaymentId: string;
   razorpayOrderId: string;
   razorpaySignature?: string;
@@ -406,128 +398,49 @@ export async function verifyPaymentAction({
     throw new Error("Unauthorized");
   }
 
-  const isMockKeys = (process.env.RAZORPAY_KEY_ID || "").startsWith("rzp_test_mock");
-  let isValid = false;
+  const parsed = verifyInputSchema.safeParse(rawInput ?? {});
+  if (!parsed.success) {
+    throw new Error("Invalid payment verification request.");
+  }
+  const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = parsed.data;
 
-  if (isMockKeys) {
+  let isValid: boolean;
+  if (isRazorpayMockMode()) {
     isValid = true;
   } else {
     if (!razorpaySignature) {
       throw new Error("Missing razorpay payment signature");
     }
-    const text = `${razorpayOrderId}|${razorpayPaymentId}`;
-    const generatedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET || "")
-      .update(text)
-      .digest("hex");
-
-    try {
-      const generatedBuf = Buffer.from(generatedSignature, "utf8");
-      const signatureBuf = Buffer.from(razorpaySignature, "utf8");
-      isValid = generatedBuf.length === signatureBuf.length && crypto.timingSafeEqual(generatedBuf, signatureBuf);
-    } catch {
-      isValid = false;
-    }
-  }
-
-  const orderRecords = await db.query.orders.findMany({
-    where: eq(orders.razorpayOrderId, razorpayOrderId),
-  });
-
-  if (orderRecords.length === 0) {
-    throw new Error("Order not found");
+    isValid = await verifyRazorpayPaymentSignature({
+      razorpayOrderId,
+      razorpayPaymentId,
+      signature: razorpaySignature,
+    });
   }
 
   if (isValid) {
-    await db
-      .update(orders)
-      .set({
-        status: "completed",
-        razorpayPaymentId,
-      })
-      .where(eq(orders.razorpayOrderId, razorpayOrderId));
-
-    // Route split automation auto-logging
-    for (const order of orderRecords) {
-      const product = await db.query.products.findFirst({ where: eq(products.id, order.productId) });
-      if (!product) continue;
-
-      let affiliate: any = null;
-      let commissionPercent = 0;
-      let commissionCents = 0;
-
-      if (order.referredById) {
-        affiliate = await db.query.users.findFirst({ where: eq(users.id, order.referredById) });
-        if (affiliate) {
-          commissionPercent = product.affiliateCommissionPercent ?? 30;
-          commissionCents = Math.round(order.amount * (commissionPercent / 100));
-        }
-      }
-
-      // 1. Log Affiliate Commission
-      if (affiliate && commissionCents > 0) {
-        const isAffiliateRouteActive = !!affiliate.razorpayAccountId && affiliate.razorpayAccountId.startsWith("acc_");
-        
-        await db.insert(affiliateCommissions).values({
-          id: crypto.randomUUID(),
-          affiliateId: affiliate.id,
-          orderId: order.id,
-          productId: product.id,
-          amount: commissionCents,
-          percent: commissionPercent,
-          status: isAffiliateRouteActive ? "paid" : "pending",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-
-        // If they received payment via Route, log a completed payout record
-        if (isAffiliateRouteActive) {
-          await db.insert(payouts).values({
-            id: crypto.randomUUID(),
-            userId: affiliate.id,
-            amount: commissionCents,
-            status: "processed",
-            payoutMethod: "bank",
-            payoutDetails: `Automated Razorpay Route Split Affiliate commission for Order: ${order.id}`,
-            createdAt: new Date(),
-          });
-        }
-      }
-
-      // 2. Log Creator Payout
-      if (product.creatorId) {
-        const creator = await db.query.users.findFirst({ where: eq(users.id, product.creatorId) });
-        if (creator?.razorpayAccountId && order.amount > 0) {
-          // Subtract affiliate cut if affiliate exists
-          const creatorPercent = affiliate ? Math.max(0.95 - (commissionPercent / 100), 0) : 0.95;
-          const creatorSplitCents = Math.round(order.amount * creatorPercent);
-
-          if (creatorSplitCents > 0) {
-            await db.insert(payouts).values({
-              id: crypto.randomUUID(),
-              userId: creator.id,
-              amount: creatorSplitCents,
-              status: "processed",
-              payoutMethod: "bank",
-              paypalEmail: creator.paypalEmail || null,
-              payoutDetails: `Automated Razorpay Route Split payout for Order ID: ${order.id}`,
-              createdAt: new Date(),
-            });
-          }
-        }
-      }
+    // Scoped to the signed-in buyer; idempotent with the webhook.
+    const result = await completeRazorpayOrder({
+      razorpayOrderId,
+      razorpayPaymentId,
+      userId: user.id,
+    });
+    if (!result.found || !result.firstOrderId) {
+      throw new Error("Order not found");
     }
-
-    return { success: true, orderId: orderRecords[0].id };
-  } else {
-    await db
-      .update(orders)
-      .set({
-        status: "failed",
-        razorpayPaymentId,
-      })
-      .where(eq(orders.razorpayOrderId, razorpayOrderId));
-
-    return { success: false };
+    return { success: true, orderId: result.firstOrderId };
   }
+
+  // Invalid signature: only this user's still-pending rows may be marked failed.
+  const [owned] = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(eq(orders.razorpayOrderId, razorpayOrderId), eq(orders.userId, user.id)))
+    .limit(1);
+  if (!owned) {
+    throw new Error("Order not found");
+  }
+  await failRazorpayOrder({ razorpayOrderId, razorpayPaymentId, userId: user.id });
+
+  return { success: false };
 }

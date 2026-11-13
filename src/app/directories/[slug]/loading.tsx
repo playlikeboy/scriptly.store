@@ -1,61 +1,30 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { ProductGridSkeleton } from "@/app/explore/_components/skeletons";
 
 export default function DirectoryDetailLoading() {
   return (
-    <div className="container max-w-5xl mx-auto px-4 sm:px-6 py-10 md:py-16 space-y-10 animate-in fade-in duration-200">
-      {/* Back button & Breadcrumb */}
-      <div className="flex items-center gap-3">
-        <Skeleton className="h-9 w-28 rounded-xl" />
-        <span className="text-muted-foreground/30">/</span>
-        <Skeleton className="h-4 w-32 rounded-md" />
-      </div>
-
-      {/* Directory Hero Card Skeleton */}
-      <div className="rounded-3xl border border-border/40 bg-card/25 p-6 sm:p-8 space-y-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <Skeleton className="w-16 h-16 rounded-2xl shrink-0" />
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Skeleton className="h-8 w-48 rounded-xl" />
-                <Skeleton className="h-5 w-20 rounded-full" />
-              </div>
-              <Skeleton className="h-4 w-64 rounded-md" />
-            </div>
-          </div>
-          <Skeleton className="h-11 w-44 rounded-xl shrink-0" />
-        </div>
-
-        {/* Directory Stats Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 border-t border-border/30">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="space-y-1">
-              <Skeleton className="h-3.5 w-20 rounded-md" />
-              <Skeleton className="h-6 w-24 rounded-lg" />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Guide Content Card Skeleton */}
-      <div className="rounded-3xl border border-border/40 bg-card/25 p-6 sm:p-8 space-y-6">
-        <Skeleton className="h-6 w-48 rounded-lg" />
-        <div className="space-y-3">
-          <Skeleton className="h-4 w-full rounded-md" />
-          <Skeleton className="h-4 w-11/12 rounded-md" />
-          <Skeleton className="h-4 w-4/5 rounded-md" />
-        </div>
-
-        <div className="pt-4 space-y-3">
-          <Skeleton className="h-5 w-36 rounded-md" />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {Array.from({ length: 4 }).map((_, idx) => (
-              <div key={idx} className="p-3 rounded-xl border border-border/30 bg-muted/20 flex items-center gap-3">
-                <Skeleton className="w-5 h-5 rounded-full" />
-                <Skeleton className="h-4 w-3/4 rounded-md" />
-              </div>
+    <div className="bg-background" role="status" aria-label="Loading directory">
+      <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 md:py-14 lg:px-8">
+        <Skeleton className="h-4 w-56" />
+        <div className="mt-6 grid grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="max-w-[68ch] space-y-3">
+            <Skeleton className="h-10 w-2/3" />
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-4/5" />
+            <Skeleton className="mt-10 h-7 w-56" />
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-4 w-full" />
             ))}
           </div>
+          <div className="h-fit space-y-3 rounded-2xl border border-border bg-card p-5">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="mt-2 h-10 w-full rounded-[10px]" />
+          </div>
+        </div>
+        <div className="mt-20 border-t border-border pt-12">
+          <Skeleton className="h-7 w-72" />
+          <ProductGridSkeleton count={3} className="mt-8 xl:grid-cols-3" />
         </div>
       </div>
     </div>
