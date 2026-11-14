@@ -19,6 +19,13 @@
   "images": {
     "binding": "IMAGES"
   },
+  // Private product archives. Never public; served only by /api/download/[productId].
+  "r2_buckets": [
+    {
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "scriptly-assets"
+    }
+  ],
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",

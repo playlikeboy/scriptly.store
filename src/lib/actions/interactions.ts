@@ -203,7 +203,7 @@ export async function submitReviewAction(productId: string, rating: number, comm
       await db
         .update(products)
         .set({
-          rating: count > 0 && agg?.avg ? agg.avg : "5.0",
+          rating: count > 0 && agg?.avg ? agg.avg : "0",
           ratingCount: count,
         })
         .where(eq(products.id, productId));

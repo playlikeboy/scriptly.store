@@ -37,8 +37,16 @@ export async function isValidAgentKey(token: string | null | undefined): Promise
   return timingSafeEqualString(token, expected);
 }
 
+/**
+ * The key presented in headers: `Authorization: Bearer <key>` or `x-api-key: <key>`
+ * (some MCP hosts, e.g. Composio custom headers, only support the latter).
+ */
+export function getPresentedAgentKey(request: Request): string | null {
+  return getBearerToken(request) || request.headers.get("x-api-key")?.trim() || null;
+}
+
 export async function authorizeAgentRequest(request: Request): Promise<boolean> {
-  return isValidAgentKey(getBearerToken(request));
+  return isValidAgentKey(getPresentedAgentKey(request));
 }
 
 export function jsonError(message: string, status: number, details?: unknown) {

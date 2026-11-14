@@ -235,13 +235,18 @@ export default async function ProductDetailPage({ params }: PageProps) {
         url: siteConfig.url,
       },
     },
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: product.rating || "5.0",
-      reviewCount: Math.max(product.ratingCount || 1, 1),
-      bestRating: "5",
-      worstRating: "1",
-    },
+    // Only real ratings: never invent an AggregateRating for unrated products.
+    ...((product.ratingCount ?? 0) > 0 && Number(product.rating) > 0
+      ? {
+          aggregateRating: {
+            "@type": "AggregateRating",
+            ratingValue: product.rating,
+            reviewCount: product.ratingCount,
+            bestRating: "5",
+            worstRating: "1",
+          },
+        }
+      : {}),
   };
 
   const breadcrumbsSchema = {
@@ -383,7 +388,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
               {product.shortDescription}
             </p>
           )}
-          <ProductRating productId={product.id} initialRating={product.rating || "5.0"} />
+          <ProductRating productId={product.id} initialRating={product.rating || "0"} />
         </header>
 
         <div className="mt-8 grid grid-cols-1 items-start gap-10 lg:grid-cols-12 lg:gap-12">
@@ -583,7 +588,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
             initialViews={product.views || 0}
             initialDownloads={product.downloadsCount || 0}
             initialSaves={product.saves || 0}
-            initialRating={product.rating || "5.0"}
+            initialRating={product.rating || "0"}
             initialRatingCount={product.ratingCount || 0}
             userLoggedIn={!!user}
             showStats={product.showStats}

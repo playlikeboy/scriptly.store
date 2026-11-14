@@ -251,17 +251,25 @@ export default function ProductInteractionAndReviews({
         <div className="space-y-1.5">
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">Reviews</h2>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-            <Stars value={Math.round(ratingValue)} />
-            <span className="tabular font-medium text-foreground">{ratingValue.toFixed(1)}</span>
-            {initialRatingCount > 0 && (
+            {initialRatingCount > 0 && ratingValue > 0 ? (
+              <>
+                <Stars value={Math.round(ratingValue)} />
+                <span className="tabular font-medium text-foreground">{ratingValue.toFixed(1)}</span>
+                <span className="tabular">
+                  from {initialRatingCount} {initialRatingCount === 1 ? "rating" : "ratings"}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular">
+                  {parentReviews.length} {parentReviews.length === 1 ? "review" : "reviews"}
+                </span>
+              </>
+            ) : parentReviews.length > 0 ? (
               <span className="tabular">
-                from {initialRatingCount} {initialRatingCount === 1 ? "rating" : "ratings"}
+                {parentReviews.length} {parentReviews.length === 1 ? "review" : "reviews"}
               </span>
+            ) : (
+              <span>No reviews yet. Bought it? Be the first to review.</span>
             )}
-            <span aria-hidden="true">·</span>
-            <span className="tabular">
-              {parentReviews.length} {parentReviews.length === 1 ? "review" : "reviews"}
-            </span>
           </p>
         </div>
 

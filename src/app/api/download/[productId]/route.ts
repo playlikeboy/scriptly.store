@@ -5,6 +5,7 @@ import { products, orders, downloads, users } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { hexclave } from "@/lib/hexclave";
 import { getProductEffectivePrice } from "@/lib/price-utils";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const PRIVATE_NO_STORE = "private, no-cache, no-store, must-revalidate";
 const ALLOWED_EXTENSIONS = [".zip", ".pdf", ".tar.gz"];
@@ -115,6 +116,32 @@ export async function GET(
     }
 
     const fileUrl = product.fileUrl;
+
+    // Private R2 storage: r2://<slug>/<file>.zip, streamed only after the
+    // entitlement check above. The bucket is never exposed publicly.
+    if (fileUrl.startsWith("r2://")) {
+      const key = fileUrl.slice("r2://".length);
+      if (!key || key.startsWith("/") || key.includes("\\") || key.split("/").some((s) => s === ".." || s === "")) {
+        return textError(404, "Product or file not found.");
+      }
+      const { env } = await getCloudflareContext({ async: true });
+      const object = await env.ASSETS_BUCKET.get(key);
+      if (!object) {
+        console.error("R2 object missing for product", product.slug, key);
+        return textError(404, "Product file is temporarily unavailable. Please contact support.");
+      }
+      const fileName = safeAttachmentName(fileUrl, product.slug);
+      return new Response(object.body, {
+        headers: {
+          "Content-Type": fileName.endsWith(".zip") ? "application/zip" : "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+          "Content-Length": String(object.size),
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": PRIVATE_NO_STORE,
+          ETag: object.httpEtag,
+        },
+      });
+    }
 
     // Remote storage
     if (/^https?:\/\//i.test(fileUrl)) {

@@ -80,7 +80,7 @@ This document provides a comprehensive inventory of all client-facing and API ro
 | `/api/webhooks/razorpay` | `POST` | Razorpay (HMAC) | Payment capture & order fulfillment webhook | JSON |
 | `/api/products.json` | `GET` | Public | Public JSON catalog feed | JSON |
 | `/api/blog.json` | `GET` | Public | Public blog article feed | JSON |
-| `/api/agents/mcp` | `GET`, `POST` | Public | MCP tool interface for AI agents | JSON |
+| `/api/agents/mcp` | `POST`, `GET` (SSE), `DELETE`, `OPTIONS` | Agent API key (`Authorization: Bearer` or `x-api-key`) | MCP admin server: Streamable HTTP + legacy SSE, 44 tools (see `docs/MCP.md`) | JSON / SSE |
 
 ---
 

@@ -4,6 +4,7 @@
 interface __BaseEnv_CloudflareEnv {
 	IMAGES: ImagesBinding;
 	ASSETS: Fetcher;
+	ASSETS_BUCKET: R2Bucket;
 	NEXTJS_ENV: string;
 	WORKER_SELF_REFERENCE: Fetcher /* scriptlystore */;
 }

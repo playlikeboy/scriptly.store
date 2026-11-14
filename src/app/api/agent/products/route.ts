@@ -126,8 +126,9 @@ export async function POST(request: NextRequest) {
       published: input.published ?? true,
       creatorId: input.creatorId ?? null,
       status: input.status ?? "approved",
-      rating: input.rating ?? "5.0",
-      ratingCount: input.ratingCount ?? 1,
+      // No reviews yet: don't fake social proof with the schema defaults ('5.0' / 1).
+      rating: input.rating ?? "0",
+      ratingCount: input.ratingCount ?? 0,
       isFree: input.isFree ?? false,
       discountPercent: input.discountPercent ?? 0,
       promoStart: input.promoStart ?? null,

@@ -67,9 +67,17 @@ export default function ProductRating({ productId, initialRating }: ProductRatin
       </div>
 
       <p className="flex items-baseline gap-1.5 text-muted-foreground" aria-live="polite">
-        <span className="font-semibold tabular-nums text-foreground">{rating.toFixed(1)}</span>
+        {rating > 0 && (
+          <span className="font-semibold tabular-nums text-foreground">{rating.toFixed(1)}</span>
+        )}
         <span className="text-xs">
-          {isPending ? "Saving your rating…" : hoverRating ? `Rate ${hoverRating} of 5` : "average rating"}
+          {isPending
+            ? "Saving your rating…"
+            : hoverRating
+              ? `Rate ${hoverRating} of 5`
+              : rating > 0
+                ? "average rating"
+                : "No ratings yet"}
         </span>
       </p>
     </div>

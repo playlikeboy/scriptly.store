@@ -136,3 +136,22 @@ Listens for asynchronous payment fulfillment events sent by Razorpay.
 #### Handled Events
 - `payment.captured`: Updates order status to `completed`, records payment ID, and credits the creator's ledger.
 - `order.paid`: Confirms order processing.
+
+---
+
+## 5. Agent APIs (API key)
+
+Both agent surfaces authenticate with the `AGENT_API_KEY` secret, sent as `Authorization: Bearer <key>` or `x-api-key: <key>`. The key is compared in constant time, and requests fail closed when the secret is not configured.
+
+### MCP server: `POST /api/agents/mcp`
+A full admin control plane for AI agents over the Model Context Protocol: Streamable HTTP (stateless, JSON or single-frame SSE responses) plus legacy HTTP+SSE. It provides 44 tools covering products, moderation, categories, coupons, orders (read-only), users, payouts, affiliates, payment links and reviews, plus read-only resources.
+
+```bash
+claude mcp add --transport http scriptly https://scriptly.store/api/agents/mcp \
+  --header "Authorization: Bearer <KEY>"
+```
+
+The full tool catalog, transport behavior, money units (catalog = USD cents, payment links = INR paise) and safety model are in [MCP.md](./MCP.md).
+
+### REST products: `/api/agent/products`, `/api/agent/products/[id]`
+`GET` (list/filter), `POST` (create), `GET|PATCH|DELETE /[id]` (by id or slug). Prices are integer USD cents. New products default to rating `"0"` with rating count `0` unless the body sets them.
