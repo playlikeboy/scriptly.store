@@ -4,7 +4,7 @@
 
 - **Endpoint:** `https://scriptly.store/api/agents/mcp`
 - **Transports:** Streamable HTTP (preferred, protocol `2025-06-18` / `2025-03-26`), and legacy HTTP+SSE (`2024-11-05`)
-- **Auth:** the `AGENT_API_KEY` secret, sent as `Authorization: Bearer <key>` **or** `x-api-key: <key>`
+- **Auth:** the `AGENT_API_KEY` secret, sent as `Authorization: Bearer <key>`, `Authorization: <key>`, `x-api-key: <key>`, or `?key=<key>` on the URL (URL-only connectors; prefer a header, query strings can be logged). Discovery (`initialize`, `ping`, `tools/list`, `resources/list`, `prompts/list`, notifications) works without a key so any connector can list tools; `tools/call` and `resources/read` require it
 - **Code:** `src/app/api/agents/mcp/route.ts` (thin HTTP layer), `src/lib/mcp/` (protocol, tools, resources)
 
 > The key grants full admin access to production data. Treat it like a database password: never put it in a URL, chat log or client-side code, and rotate it (`wrangler secret put AGENT_API_KEY`) if it leaks. Rotation immediately invalidates every open session.

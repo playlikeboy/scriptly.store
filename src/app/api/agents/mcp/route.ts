@@ -12,7 +12,14 @@ import { handleLegacyPost, openLegacySse } from "@/lib/mcp/legacy-sse";
  * - Legacy HTTP+SSE (2024-11-05): GET with Accept: text/event-stream opens the
  *   stream; POST ?session=<id> delivers messages.
  *
- * Auth: `Authorization: Bearer <AGENT_API_KEY>` or `x-api-key: <AGENT_API_KEY>`.
+ * Auth: `Authorization: Bearer <AGENT_API_KEY>`, `Authorization: <AGENT_API_KEY>`,
+ * `x-api-key: <AGENT_API_KEY>`, or `?key=<AGENT_API_KEY>` on the URL for connectors
+ * that only take a URL (query keys can end up in logs; prefer a header).
+ *
+ * Discovery (initialize, ping, tools/list, resources/list, prompts/list and
+ * notifications) is answered without a key, so any connector can list the
+ * tools before or without sending credentials. Every tool call and resource
+ * read still requires the key.
  */
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -38,6 +45,45 @@ function unauthorized() {
   return json({ error: "Unauthorized: send Authorization: Bearer <key> or x-api-key: <key>." }, 401, {
     "WWW-Authenticate": 'Bearer realm="scriptly-mcp"',
   });
+}
+
+const QUERY_KEY_PARAMS = ["key", "api_key", "apiKey", "token", "access_token"];
+
+/** Key from headers, then from the URL query string. */
+function presentedKey(request: NextRequest): string | null {
+  const fromHeader = getPresentedAgentKey(request);
+  if (fromHeader) return fromHeader;
+  const raw = request.headers.get("authorization")?.trim();
+  if (raw && !/\s/.test(raw)) return raw; // bare key without "Bearer "
+  const sp = request.nextUrl.searchParams;
+  for (const name of QUERY_KEY_PARAMS) {
+    const v = sp.get(name)?.trim();
+    if (v) return v;
+  }
+  return null;
+}
+
+/** Methods that only describe the server; safe to answer without a key. */
+const PUBLIC_METHODS = new Set([
+  "initialize",
+  "ping",
+  "tools/list",
+  "resources/list",
+  "resources/templates/list",
+  "prompts/list",
+  "logging/setLevel",
+]);
+
+function isPublicMessage(m: unknown): boolean {
+  if (typeof m !== "object" || m === null || Array.isArray(m)) return false;
+  const msg = m as Record<string, unknown>;
+  if (msg.method === undefined) return "result" in msg || "error" in msg; // client response
+  if (typeof msg.method !== "string") return false;
+  return PUBLIC_METHODS.has(msg.method) || (msg.id === undefined && msg.method.startsWith("notifications/"));
+}
+
+function isPublicPayload(payload: unknown): boolean {
+  return Array.isArray(payload) ? payload.length > 0 && payload.every(isPublicMessage) : isPublicMessage(payload);
 }
 
 function legacySessionId(request: NextRequest): string | null {
@@ -66,20 +112,15 @@ export async function GET(request: NextRequest) {
     return new Response(null, { status: 405, headers: { ...CORS, Allow: ALLOW } });
   }
 
-  let key = getPresentedAgentKey(request);
-  if (!key) {
-    // Deprecated: query-string keys leak into logs. Kept only for old SSE clients.
-    const sp = request.nextUrl.searchParams;
-    key = sp.get("token") || sp.get("apiKey");
-    if (key) console.warn(JSON.stringify({ type: "mcp_deprecated_query_token" }));
-  }
+  const key = presentedKey(request);
   if (!key || !(await isValidAgentKey(key))) return unauthorized();
   return openLegacySse(request, key, CORS);
 }
 
 export async function POST(request: NextRequest) {
-  const presented = getPresentedAgentKey(request);
+  const presented = presentedKey(request);
   const keyValid = await isValidAgentKey(presented);
+  if (presented && !keyValid) return unauthorized();
 
   const raw = await readBody(request);
   if (raw === null) return json(rpcError(null, RPC.INVALID_REQUEST, "Request body too large (max 1 MB)."), 413);
@@ -87,14 +128,14 @@ export async function POST(request: NextRequest) {
   const sessionId = legacySessionId(request);
   if (sessionId) return handleLegacyPost(raw, sessionId, presented, keyValid, CORS);
 
-  if (!keyValid) return unauthorized();
-
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
   } catch {
     return json(rpcError(null, RPC.PARSE_ERROR, "Parse error: body must be valid JSON."), 400);
   }
+
+  if (!keyValid && !isPublicPayload(payload)) return unauthorized();
 
   const { body, isInitialize } = await handlePayload(payload);
   const extra: Record<string, string> = {};
@@ -121,7 +162,7 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   // Stateless session termination: nothing to tear down.
-  if (!(await isValidAgentKey(getPresentedAgentKey(request)))) return unauthorized();
+  if (!(await isValidAgentKey(presentedKey(request)))) return unauthorized();
   return new Response(null, { status: 204, headers: CORS });
 }
 
